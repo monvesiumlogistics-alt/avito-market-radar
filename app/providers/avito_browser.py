@@ -16,9 +16,10 @@ log = logging.getLogger(__name__)
 class AvitoBrowserProvider(AvitoProvider):
     """Обычный Chromium с постоянным профилем (cookies/логин из `python -m app.auth`). Без обходов защиты."""
 
-    def __init__(self, profile_path: str, headless: bool, debug_dir: str = "./data/debug"):
+    def __init__(self, profile_path: str, headless: bool, proxy: dict | None = None, debug_dir: str = "./data/debug"):
         self.profile_path = profile_path
         self.headless = headless
+        self.proxy = proxy
         self.debug_dir = Path(debug_dir)
         self._pw: Playwright | None = None
         self._ctx: BrowserContext | None = None
@@ -28,7 +29,12 @@ class AvitoBrowserProvider(AvitoProvider):
         self._pw = await async_playwright().start()
         try:
             self._ctx = await self._pw.chromium.launch_persistent_context(
-                self.profile_path, headless=self.headless, locale="ru-RU", viewport={"width": 1366, "height": 900}
+                self.profile_path,
+                headless=self.headless,
+                proxy=self.proxy,
+                locale="ru-RU",
+                timezone_id="Europe/Moscow",
+                viewport={"width": 1366, "height": 900},
             )
         except Exception:
             await self._pw.stop()

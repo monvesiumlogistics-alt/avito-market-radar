@@ -8,13 +8,18 @@ import asyncio
 
 from playwright.async_api import async_playwright
 
-from app.config import settings
+from app.config import playwright_proxy, settings
 
 
 async def main() -> None:
     async with async_playwright() as p:
         ctx = await p.chromium.launch_persistent_context(
-            settings.avito_profile_path, headless=False, locale="ru-RU", no_viewport=True
+            settings.avito_profile_path,
+            headless=False,
+            proxy=playwright_proxy(settings.avito_proxy),  # вход с того же IP, что и бот
+            locale="ru-RU",
+            timezone_id="Europe/Moscow",
+            no_viewport=True,
         )
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         await page.goto("https://www.avito.ru/#login")

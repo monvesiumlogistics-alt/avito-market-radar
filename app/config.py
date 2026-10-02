@@ -1,3 +1,5 @@
+from urllib.parse import unquote, urlsplit
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +15,7 @@ class Settings(BaseSettings):
 
     avito_search_urls: str = ""
     avito_profile_path: str = "./data/avito_profile"
+    avito_proxy: str = ""  # http://user:pass@host:port — только для браузера Avito
     headless: bool = False
     max_pages: int = 3
 
@@ -29,6 +32,17 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///./data/app.db"
     log_level: str = "INFO"
+
+
+def playwright_proxy(url: str) -> dict | None:
+    """'http://user:pass@host:port' -> формат proxy для Playwright."""
+    if not url:
+        return None
+    parts = urlsplit(url)
+    proxy = {"server": f"{parts.scheme}://{parts.hostname}:{parts.port}"}
+    if parts.username:
+        proxy |= {"username": unquote(parts.username), "password": unquote(parts.password or "")}
+    return proxy
 
 
 def split_csv(raw: str) -> list[str]:

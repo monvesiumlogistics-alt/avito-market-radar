@@ -8,7 +8,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.config import settings
+from app.config import playwright_proxy, settings
 from app.db import init_db, sync_default_rule
 from app.providers.avito_browser import AvitoBrowserProvider
 from app.services.notifier import TelegramNotifier
@@ -39,9 +39,10 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode="HTML"),
     )
     notifier = TelegramNotifier(bot, settings.telegram_admin_chat_id)
+    proxy = playwright_proxy(settings.avito_proxy)
     scanner = Scanner(
         session_factory,
-        lambda: AvitoBrowserProvider(settings.avito_profile_path, settings.headless),
+        lambda: AvitoBrowserProvider(settings.avito_profile_path, settings.headless, proxy),
         notifier,
         interval_minutes=settings.check_interval_minutes,
         initial_scan_notify=settings.initial_scan_notify,
