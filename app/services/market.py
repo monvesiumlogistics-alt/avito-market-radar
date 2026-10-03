@@ -13,7 +13,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings, split_csv
-from app.db import Category, CrawlRun, Find
+from app.db import Category, CrawlRun, Find, ScanCategory
 from app.models import Listing
 from app.providers.avito_parser import (
     BASE_URL,
@@ -25,10 +25,12 @@ from app.providers.avito_parser import (
     parse_search_html,
     parse_seller_date,
     parse_subcategories,
+    parse_total_count,
     promoted_ids,
     with_page,
 )
 from app.providers.base import AvitoProvider, BrowserLost, ProviderBlocked
+from app.services.history import record_card, record_gone, record_search, update_ad
 from app.services.market_cmds import entries_for
 from app.services.market_logic import (
     age_days,
@@ -521,17 +523,21 @@ class MarketCrawler:
             try:
                 res = await self._fetch(url, SELECTORS["item_views"][0])
                 gone = is_gone(res.html, res.title, res.status)
-                views = None if gone else parse_item_page(res.html).views
+                st = None if gone else parse_item_page(res.html)
             except (StopRequested, BudgetExhausted, ProviderBlocked, BrowserLost):
                 raise
             except Exception as e:
                 log.warning("[MARKET] перепроверка %s: %s", url, e)
                 continue
-            self._save_recheck(ext_id, gone, views)
+            self._save_recheck(ext_id, gone, st.views if st else None, st.today if st else None)
 
-    def _save_recheck(self, ext_id: str, gone: bool, views: int | None) -> None:
+    def _save_recheck(self, ext_id: str, gone: bool, views: int | None, today: int | None = None) -> None:
         with self.session_factory() as db:
             now = self.clock()
+            if gone:
+                record_gone(db, ext_id, now)
+            elif views is not None:
+                record_card(db, ext_id, now, self.run_id, "recheck", views, today)
             marked = False
             for f in db.scalars(select(Find).where(Find.external_id == ext_id)):
                 f.last_checked_at = now
@@ -588,7 +594,7 @@ class MarketCrawler:
             url, name = cat.url, cat.name
             self._current = current_label(cat.section, name)
         try:
-            cards, covered = await self._collect(url, name)
+            cards, covered = await self._collect(cat_id, url, name)
             finds, best_vpd, opened = await self._evaluate(cat_id, cards)
         except (StopRequested, BudgetExhausted, ProviderBlocked):
             self._save(None)
@@ -604,22 +610,33 @@ class MarketCrawler:
         await self._send_hot(added)
         return True
 
-    async def _collect(self, url: str, name: str) -> tuple[list[Listing], float]:
-        """Листает выдачу по дате; возвращает кандидатов и сколько дней из max_age покрыто."""
+    async def _collect(self, cat_id: int, url: str, name: str) -> tuple[list[Listing], float]:
+        """Листает выдачу по дате; возвращает кандидатов и сколько дней из max_age покрыто.
+        Каждая прочитанная страница сразу пишется в историю (ADR-015): прерывание не теряет увиденное."""
         s, now = self.settings, self.clock()
         limit = timedelta(days=s.report_max_age_days)
         found: dict[str, Listing] = {}
         last_age: timedelta | None = None
         full = False
+        stop, total, pages, seen, new, known = "depth_cap", None, 0, 0, 0, 0
         for page in range(1, s.report_max_pages + 1):
             sep = "&" if "?" in url else "?"  # подкатегория может быть поиском по слову: .../muzhskaya_odezhda?q=prada
             res = await self._fetch(with_page(f"{url}{sep}s=104&pmin={s.min_price}", page), SELECTORS["card"][0])
+            pages += 1
             cards = parse_search_html(res.html, name, now)
+            if page == 1:
+                total = parse_total_count(res.html)
+            promo = promoted_ids(res.html)
+            with self.session_factory() as db:
+                n, k = record_search(db, cat_id, cards, promo, now)
+                db.commit()
+            seen, new, known = seen + n + k, new + n, known + k
             if not cards:
                 log.warning("[MARKET] 0 карточек: %s стр. %d", url, page)
-                full = True
+                stop = "empty"
+                full = not (page == 1 and total)  # пустая 1-я страница при «N объявлений» — сбой вёрстки, не «пусто»
                 break
-            promo, old = promoted_ids(res.html), False
+            old = False
             for c in cards:
                 if c.external_id in promo or c.published_at is None:
                     continue  # промо и нераспознанная дата листание не останавливают
@@ -631,9 +648,17 @@ class MarketCrawler:
                 if c.price and c.price >= s.min_price:  # локальная перепроверка: pmin Avito может игнорировать
                     found.setdefault(c.external_id, c)
             if old:
-                full = True
+                full, stop = True, "age_limit"
                 break
         covered = float(s.report_max_age_days) if full else (last_age.total_seconds() / 86400 if last_age else 0.0)
+        with self.session_factory() as db:
+            db.merge(
+                ScanCategory(
+                    run_id=self.run_id, category_id=cat_id, at=now, pages=pages, cards_seen=seen, new_ads=new,
+                    known_ads=known, total_count=total, window_hours=covered * 24, stop_reason=stop,
+                )
+            )  # fmt: skip
+            db.commit()
         return list(found.values()), covered
 
     async def _evaluate(self, cat_id: int, cards: list[Listing]) -> tuple[list[Find], int, list[Opened]]:
@@ -709,6 +734,10 @@ class MarketCrawler:
                 log.warning("[MARKET] нет счётчика просмотров: %s", card.url)
                 return None
             page_date = parse_published(st.date_text, now, absolute_time=True)
+            with self.session_factory() as db:
+                record_card(db, card.external_id, now, self.run_id, "report", st.views, st.today, page_date, "card",
+                            st.seller_url)  # fmt: skip
+                db.commit()
             if page_date and now - page_date > timedelta(days=s.report_max_age_days):
                 return "old"
             age = find_age(page_date, card.published_at, now)
@@ -727,7 +756,12 @@ class MarketCrawler:
         try:
             res = await self._fetch(o.seller_url, SELECTORS["profile_item"][0])
             text = parse_seller_date(res.html, o.card.external_id)
-            return parse_published(text, self.clock(), absolute_time=True)
+            date = parse_published(text, self.clock(), absolute_time=True)
+            if date:
+                with self.session_factory() as db:
+                    update_ad(db, o.card.external_id, date, "seller")
+                    db.commit()
+            return date
         except (StopRequested, BudgetExhausted, ProviderBlocked, BrowserLost):
             raise
         except Exception as e:

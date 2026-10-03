@@ -123,6 +123,75 @@ class Find(Base):
     feedback: Mapped[int] = mapped_column(default=0)  # 👍 +1 / 👎 -1 из кнопок под порцией
 
 
+# --- история рынка (ADR-015): одна строка на объявление + изменения, а не снимок на каждую встречу ---
+
+
+class Ad(Base):
+    """Каждое объявление, увиденное в выдаче. Повторная встреча обновляет last_seen_at; изменения — в ad_events."""
+
+    __tablename__ = "ads"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # avito item id
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
+    title: Mapped[str] = mapped_column(String(500))
+    model_key: Mapped[str | None] = mapped_column(String(200), index=True)
+    price: Mapped[int | None]
+    url_path: Mapped[str] = mapped_column(String(500))  # без ?context=...
+    city: Mapped[str | None] = mapped_column(String(300))
+    shop: Mapped[str | None] = mapped_column(String(300))  # имя продавца из выдачи (есть у магазинов, у частников нет)
+    seller_url: Mapped[str | None] = mapped_column(String(500))  # из карточки
+    image_url: Mapped[str | None] = mapped_column(String(1000))
+    posted_at: Mapped[datetime | None]  # лучшая известная дата публикации
+    posted_src: Mapped[str | None] = mapped_column(String(8))  # search | card | seller (по возрастанию точности)
+    first_seen_at: Mapped[datetime] = mapped_column(index=True)
+    last_seen_at: Mapped[datetime]
+    promoted_seen: Mapped[int] = mapped_column(default=0)
+    status: Mapped[str] = mapped_column(String(16), default="live")  # live | gone (маркеры снятия: ADR-010)
+    status_at: Mapped[datetime | None]
+
+
+class AdEvent(Base):
+    __tablename__ = "ad_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ad_id: Mapped[str] = mapped_column(String(64), index=True)
+    at: Mapped[datetime]
+    kind: Mapped[str] = mapped_column(String(16))  # price | title | status
+    old: Mapped[str | None] = mapped_column(String(500))
+    new: Mapped[str | None] = mapped_column(String(500))
+
+
+class CardObs(Base):
+    """Замер страницы объявления. Несколько замеров одного объявления дают текущую скорость просмотров."""
+
+    __tablename__ = "card_obs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ad_id: Mapped[str] = mapped_column(String(64), index=True)
+    at: Mapped[datetime]
+    run_id: Mapped[int | None]
+    views: Mapped[int | None]
+    today: Mapped[int | None]
+    bucket: Mapped[str] = mapped_column(String(16))  # report | recheck | backfill (дальше — корзины сэмплера)
+
+
+class ScanCategory(Base):
+    """Итог выдачи одной категории за прогон: покрытие, новизна, общее число объявлений «на полке»."""
+
+    __tablename__ = "scan_categories"
+
+    run_id: Mapped[int] = mapped_column(ForeignKey("crawl_runs.id"), primary_key=True)
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), primary_key=True)
+    at: Mapped[datetime]
+    pages: Mapped[int]
+    cards_seen: Mapped[int]  # непромо-карточек на прочитанных страницах
+    new_ads: Mapped[int]  # из них впервые увиденных
+    known_ads: Mapped[int]
+    total_count: Mapped[int | None]  # «17 888» в заголовке выдачи (с фильтром pmin)
+    window_hours: Mapped[float]  # какой промежуток времени покрыт прочитанными страницами
+    stop_reason: Mapped[str] = mapped_column(String(16))  # age_limit | depth_cap | empty
+
+
 _ADDED_COLUMNS = (  # (таблица, колонка, тип) — константы, не ввод пользователя
     ("categories", "prior_score", "FLOAT"),
     ("categories", "skipped", "BOOLEAN NOT NULL DEFAULT 0"),

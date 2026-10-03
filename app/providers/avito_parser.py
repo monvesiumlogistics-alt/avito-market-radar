@@ -39,6 +39,7 @@ SELECTORS: dict[str, list[str]] = {
     "item_today": ['[data-marker="item-view/today-views"]'],
     "item_seller_link": ['[data-marker="seller-link/link"]', 'a[href*="/user/"]', 'a[href*="/brands/"]'],
     "profile_item": ['[data-marker^="item_list_with_filters/item("]'],
+    "total_count": ['[data-marker="page-title/count"]'],  # «17 888» объявлений в выдаче (ADR-015)
 }
 
 # Тексты вёрстки в одном месте (NFR-6)
@@ -289,6 +290,13 @@ def parse_seller_date(html: str, item_id: str) -> str | None:
         if card.get("data-item-id") == item_id:
             return _value(_first(card, "date"))
     return None
+
+
+def parse_total_count(html: str) -> int | None:
+    """Сколько всего объявлений в выдаче (с учётом фильтров): бесплатный ряд предложения категории."""
+    el = BeautifulSoup(html, "html.parser").select_one(SELECTORS["total_count"][0])
+    digits = re.sub(r"\D", "", el.get_text()) if el else ""
+    return int(digits) if digits else None
 
 
 def promoted_ids(html: str) -> set[str]:
