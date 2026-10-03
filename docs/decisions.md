@@ -83,3 +83,11 @@
 - Gone detection (`avito_parser.is_gone`): HTTP 404/410 (`Page.status`, new field), or no views counter and a `TEXT_PATTERNS["gone"]` marker in the title/first 3000 chars of visible text («Объявление снято с публикации», «Объявление закрыто», «Товар продан», «Объявление больше не доступно», «Страница не найдена»). «Товар зарезервирован» is not gone (fixtures `market_item*.html` verified). There is no live fixture of a removed page: the marker words are from memory of Avito's UI and must be confirmed on a real removed listing; a missed marker just means the find is rechecked again later.
 - Output: the summary gets «✅ Ушло: N (за ~X дн)» with title link, days to gone, vpd and price; `format_find` adds «✅ ушло за X дн» (so `/top` shows it); the model block shows «✅ ушло K» for models with gone listings. Gone finds stay in the DB and in the model aggregation.
 
+## ADR-011: Readable report, cards grouped by category with a reason (2026-10-04)
+- Status: accepted (user request: by category, link, short title, views, date, short WHY)
+- Portions, final summary and `/top` use one renderer: `Entry` -> `group_entries` (groups by section + subcategory, group order by best vpd, inside a group by vpd) -> `render_groups`. Header `<emoji> <SECTION NAME> — <subcategory>` (`SECTION_EMOJI`, default 📦) is glued to the first card of the group.
+- `format_card` replaces the one-line `format_find`: line 1 title link (<= 60 chars, `×N` copies), 2 price / views (+today, total) / date (seller or page date; «дата не проверена»), 3 `💡 reason()` (1-3 clauses by priority: gone, demand, copies, model seen N times, fresh, brand/model for goofish, expensive check), optional `💱` margin, last line goofish link and `#id`.
+- `split_message` is block-aware: blocks (cards) are separated by an empty line and are never cut; only a block longer than the limit falls back to line splitting (then to `", "`). `format_summary` joins blocks with empty lines.
+- 👍/👎 buttons: the numbers on the cards follow the displayed (grouped) order; one row per find, still only for portions of <= 8 finds.
+- Removed: `sort_finds` (🔥/new-first order is replaced by vpd order inside groups), its test, and the «уже было» ordering assertion; «уже было dd.mm» now sits on the date line of the card.
+

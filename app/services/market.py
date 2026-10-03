@@ -30,25 +30,26 @@ from app.providers.avito_parser import (
     with_page,
 )
 from app.providers.base import AvitoProvider, BrowserLost, ProviderBlocked
+from app.services.market_cmds import entries_for
 from app.services.market_logic import (
     age_days,
     calc_vpd,
     crawl_order,
     date_checked,
     find_age,
-    format_find,
     format_gone,
     format_models,
     format_progress,
     format_summary,
     group_cards,
+    group_entries,
     is_find,
     is_hot,
     model_groups,
     norm_title,
     pick_groups,
+    render_groups,
     section_name,
-    sort_finds,
     split_message,
 )
 
@@ -316,11 +317,8 @@ class MarketCrawler:
                 ok &= await self.notifier.send_text(chunk) is not None
         return ok
 
-    def _lines(self, db, finds: list[Find]) -> list[str]:
-        return [line for _, line in self._sorted_lines(db, finds)]
-
-    def _sorted_lines(self, db, finds: list[Find]) -> list[tuple[Find, str]]:
-        """Находки со строками: 🔥 первыми, «уже было» (находка в другом прогоне той же подкатегории) после новых."""
+    def _entries(self, db, finds: list[Find]):
+        """Карточки находок: «уже было» — находка той же подкатегории в другом прогоне; «модель N раз» — по прогону."""
         if not finds:
             return []
         keys, cat_ids = {f.group_key for f in finds}, {f.category_id for f in finds}
@@ -331,8 +329,8 @@ class MarketCrawler:
             .group_by(Find.group_key, Find.category_id)
         ):
             seen[key] = min(first, seen.get(key, first))
-        names = dict(db.execute(select(Category.id, Category.name).where(Category.id.in_(cat_ids))).all())
-        return [(f, format_find(f, names[f.category_id], seen.get(f.group_key))) for f in sort_finds(finds, seen)]
+        run_finds = list(db.scalars(select(Find).where(Find.run_id == self.run_id)))
+        return entries_for(db, finds, self.settings, seen, run_finds)
 
     async def _portion(self, section: str) -> None:
         """Находки только что пройденного раздела (AC-4.2)."""
@@ -346,20 +344,21 @@ class MarketCrawler:
             )
             if not finds:
                 return
-            pairs = self._sorted_lines(db, finds)
+            groups = group_entries(self._entries(db, finds))
+            ordered = [e.find for g in groups for e in g]
             markup = None
-            if len(pairs) <= FEEDBACK_MAX_FINDS:  # под порцией: ряд кнопок на находку, номер = номер строки
-                pairs = [(f, f"{n}. {line}") for n, (f, line) in enumerate(pairs, 1)]
+            if len(ordered) <= FEEDBACK_MAX_FINDS:  # под порцией: ряд кнопок на находку, номер = номер карточки
                 markup = InlineKeyboardMarkup(
                     inline_keyboard=[
                         [
                             InlineKeyboardButton(text=f"👍 {n}", callback_data=f"fb:{f.id}:1"),
                             InlineKeyboardButton(text=f"👎 {n}", callback_data=f"fb:{f.id}:-1"),
                         ]
-                        for n, (f, _) in enumerate(pairs, 1)
+                        for n, f in enumerate(ordered, 1)
                     ]
                 )
-            text = "\n".join([f"<b>{html.escape(section_name(section))} — находки</b>", *(ln for _, ln in pairs)])
+            head = f"<b>{html.escape(section_name(section))} — находки</b>"
+            text = "\n\n".join([head, *render_groups(groups, numbered=markup is not None)])
             ids = [f.id for f in finds]
         if await self._send(text, markup):  # Telegram не принял — sent=0, находки всё равно попадут в итог
             self._mark_sent(ids)
@@ -390,7 +389,9 @@ class MarketCrawler:
                 f"Всего: найдено {len(finds)}, 🔥 {sum(f.hot for f in finds)}, "
                 f"подкатегорий {len(done)}, загрузок {loads}"
             )
-            lines = self._lines(db, unsent) or (["Новых находок нет, остальные отправлены выше."] if finds else [])
+            lines = render_groups(group_entries(self._entries(db, unsent))) or (
+                ["Новых находок нет, остальные отправлены выше."] if finds else []
+            )
             text = format_summary(
                 self.clock(),
                 lines,

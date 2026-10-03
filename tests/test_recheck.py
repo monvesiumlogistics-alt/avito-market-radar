@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 
 from app.db import Find
 from app.providers.avito_parser import is_gone
-from app.services.market_logic import format_find, format_gone, format_models, model_groups
+from app.services.market_logic import format_card, format_gone, format_models, model_groups
 from tests.test_cmds import add_find  # noqa: F401
 from tests.test_market import FIXTURES, NOW, card_url, item_html, life, rows, runs, summary_text
 
@@ -122,7 +122,7 @@ def test_format_gone_find_line_and_models():
     f = NS(title="Bugaboo", url="https://www.avito.ru/x_1", price_min=1000, price_max=1000, vpd=200,
            created_at=NOW - timedelta(days=4), gone_at=gone_at, hot=True, today=None, age_days=2, date_checked=True,
            copies=1, group_key="g", external_id="1")  # fmt: skip
-    assert "✅ ушло за 4 дн" in format_find(f, "c")
+    assert "✅ ушло за 4 дн — реально покупают" in format_card(f)
     assert format_gone([]) == []
     assert "ушло за 4 дн · 200/день · 1 000 ₽" in format_gone([f])[1]
     g = NS(**{**f.__dict__, "external_id": "2", "gone_at": None, "title": "Bugaboo Dragonfly blue"})

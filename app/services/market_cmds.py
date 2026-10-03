@@ -11,12 +11,17 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.db import Category, Find
 from app.services.market_logic import (
+    Entry,
     calc_margin,
-    format_find,
+    format_card,
     format_margin,
     format_models,
     goofish_url,
+    group_entries,
+    model_counts,
     model_groups,
+    model_key,
+    render_groups,
     section_name,
     split_message,
     weight_kg,
@@ -26,9 +31,7 @@ TOP_LIMIT = 15
 
 
 def _window(db: Session, days: int, now: datetime) -> list[Find]:
-    return list(
-        db.scalars(select(Find).where(Find.created_at >= now - timedelta(days=days)).order_by(Find.vpd.desc()))
-    )
+    return list(db.scalars(select(Find).where(Find.created_at >= now - timedelta(days=days)).order_by(Find.vpd.desc())))
 
 
 def top_finds(db: Session, days: int, now: datetime, limit: int = TOP_LIMIT) -> list[Find]:
@@ -48,20 +51,42 @@ def margin_text(f: Find, category: str, s: Settings) -> str | None:
     return format_margin(m, f.price_min, s.cny_rate, s.cargo_rub_per_kg)
 
 
+def entries_for(
+    db: Session,
+    finds: list[Find],
+    s: Settings,
+    seen: dict[str, datetime] | None = None,
+    all_finds: list[Find] | None = None,
+) -> list[Entry]:
+    """Карточки находок с разделом и подкатегорией (для группировки). all_finds — откуда считать «модель N раз»."""
+    cats = {c.id: c for c in db.scalars(select(Category).where(Category.id.in_({f.category_id for f in finds})))}
+    counts = model_counts(all_finds or finds)
+    out = []
+    for f in finds:
+        cat = cats.get(f.category_id)
+        name = cat.name if cat else "?"
+        card = format_card(
+            f,
+            (seen or {}).get(f.group_key),
+            vpd_hot=s.vpd_hot,
+            min_price=s.min_price,
+            model_count=counts.get(model_key(f.title) or "", 1),
+            margin=margin_text(f, name, s),
+        )
+        out.append(Entry(f, cat.section if cat else "", name, card))
+    return out
+
+
 def top_messages(db: Session, days: int, now: datetime, s: Settings | None = None) -> list[str]:
     finds = top_finds(db, days, now)
     if not finds:
         return [f"За {days} дн находок нет."]
     s = s or Settings(_env_file=None)
-    names = dict(db.execute(select(Category.id, Category.name)).all())
-    lines = [f"<b>Топ находок за {days} дн</b>"]
-    for f in finds:
-        cat = names.get(f.category_id, "?")
-        lines.append(format_find(f, cat))
-        if margin := margin_text(f, cat, s):
-            lines.append("   ↳ " + margin)
-    lines += format_models(model_groups(_window(db, days, now)))
-    return split_message("\n".join(lines))
+    window = _window(db, days, now)
+    blocks = render_groups(group_entries(entries_for(db, finds, s, all_finds=window)))
+    models = format_models(model_groups(window))
+    parts = [f"<b>Топ находок за {days} дн</b>", *blocks, *(["\n".join(models)] if models else [])]
+    return split_message("\n\n".join(parts))
 
 
 def set_price(db: Session, find_id: int, yuan: int, s: Settings) -> str | None:

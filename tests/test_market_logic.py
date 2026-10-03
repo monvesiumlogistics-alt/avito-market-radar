@@ -4,19 +4,24 @@ from types import SimpleNamespace as NS
 from app.config import Settings
 from app.models import Listing
 from app.services.market_logic import (
+    SECTION_EMOJI,
+    Entry,
     age_days,
     crawl_order,
     date_checked,
     find_age,
-    format_find,
+    format_card,
     format_progress,
     format_summary,
     group_cards,
+    group_entries,
     is_find,
     is_hot,
     norm_title,
     pick_cards,
-    sort_finds,
+    reason,
+    render_groups,
+    section_emoji,
     split_message,
 )
 
@@ -105,17 +110,6 @@ def test_crawl_order():
     assert [c.id for c in crawl_order(cats, run_id=7, now=NOW)] == [4, 3, 6, 2, 1]
 
 
-def test_sort_finds_hot_then_new_then_vpd():
-    f = [
-        NS(group_key="a", hot=False, vpd=90),
-        NS(group_key="b", hot=True, vpd=150),
-        NS(group_key="c", hot=True, vpd=300),
-        NS(group_key="d", hot=False, vpd=60),
-    ]
-    seen = {"c": NOW, "d": NOW}
-    assert [x.group_key for x in sort_finds(f, seen)] == ["b", "c", "a", "d"]
-
-
 def find(**kw):
     base = dict(
         title="Pioneer XDJ-RX3", url="https://www.avito.ru/x_1", price_min=95000, price_max=110000, vpd=180,
@@ -124,32 +118,101 @@ def find(**kw):
     return NS(**(base | kw))
 
 
-def test_format_find_fields():
-    line = format_find(find(), "DJ-оборудование")
-    assert line == (
-        '🔥 <a href="https://www.avito.ru/x_1">Pioneer XDJ-RX3</a> — 95 000–110 000 ₽ · 180/день (+40 сегодня)'
-        " · 3 дн · выставлено 2 раза · DJ-оборудование"
-        ' · <a href="https://www.goofish.com/search?q=Pioneer+XDJ-RX3">🔎 goofish</a>'
+def test_format_card_fields():
+    lines = format_card(find(views=540, page_date=datetime(2026, 10, 1))).split("\n")
+    assert lines[0] == '🔥 <a href="https://www.avito.ru/x_1">Pioneer XDJ-RX3</a> ×2'
+    assert lines[1] == "💰 95 000–110 000 ₽ · 👁 180/день (+40 сегодня, всего 540) · 📅 01.10 (3 дн)"
+    assert lines[2] == (
+        "💡 очень высокий спрос: 180 просм/день; выставлено 2 раза — товар ходовой;"
+        " есть бренд/модель — легко найти на goofish"
     )
-    line = format_find(
-        find(price_max=95000, today=None, date_checked=False, copies=1, hot=False), "Акустика", datetime(2026, 10, 1)
+    assert lines[3] == '<a href="https://www.goofish.com/search?q=Pioneer+XDJ-RX3">🔎 goofish</a>' and len(lines) == 4
+    card = format_card(
+        find(
+            price_max=95000, today=None, date_checked=False, copies=1, hot=False, id=7, page_date=datetime(2026, 9, 29)
+        ),
+        datetime(2026, 10, 1),
+        margin="маржа ~1 ₽",
+    ).split("\n")
+    assert card[0].startswith("<a ") and "×" not in card[0]
+    assert card[1] == "💰 95 000 ₽ · 👁 180/день · 📅 29.09 (дата не проверена) · уже было 01.10"
+    assert card[3] == "💱 маржа ~1 ₽" and card[4].endswith("🔎 goofish</a> · #7")
+    assert format_card(find(date_checked=False)).split("\n")[1].endswith("📅 дата не проверена")  # даты нет совсем
+    assert " ~1 дн" in format_card(find(age_days=0.4))
+
+
+def test_reason_rules_priority_and_cap():
+    f = find(copies=1, hot=False, vpd=60, age_days=3, title="Коляска", price_min=20000)
+    assert reason(f) == "спрос 60 просм/день"
+    assert (
+        reason(find(copies=1, vpd=60, age_days=0.5, title="Коляска", price_min=1))
+        == "спрос 60 просм/день; свежее (≤1 дн)"
     )
-    assert line.startswith("<a ") and " — 95 000 ₽ · 180/день · " in line
-    assert "(+" not in line and "дата не проверена" in line and "выставлено 1 раз ·" in line
-    assert "Акустика · уже было 01.10 · <a " in line and line.endswith("🔎 goofish</a>")
+    assert "модель встречается 3 раза" in reason(f, model_count=3)
+    assert reason(find(copies=5, vpd=150, age_days=3, title="Коляска")).startswith(
+        "очень высокий спрос: 150 просм/день; выставлено 5 раз — товар ходовой"
+    )
+    rich = find(copies=2, vpd=150, age_days=0.5, price_min=100000, gone_at=NOW, created_at=NOW - timedelta(days=3))
+    r = reason(rich, model_count=2).split("; ")
+    assert len(r) == 3 and r[0] == "✅ ушло за 3 дн — реально покупают" and r[1].startswith("очень высокий")
+    only = reason(find(copies=1, vpd=60, age_days=3, price_min=100000, title="Колонка JBL Flip"), min_price=10000)
+    assert only == "спрос 60 просм/день; есть бренд/модель — легко найти на goofish; дорогой чек — маржа в рублях выше"
 
 
-def test_format_find_plural_and_min_age():
-    assert "выставлено 5 раз" in format_find(find(copies=5), "c")
-    assert "выставлено 12 раз ·" in format_find(find(copies=12), "c")
-    assert "выставлено 22 раза" in format_find(find(copies=22), "c")
-    assert " · 1 дн · " in format_find(find(age_days=0.4), "c")
+def test_format_card_hostile_title_escaped_and_capped():
+    line = format_card(find(title='<script>"x"</script>' + "A" * 500, url='https://a.ru/?q="><b>'))
+    assert "<script>" not in line and '"><b>' not in line and "…</a>" in line
+    assert len(line.split("\n")[0]) < 200
 
 
-def test_format_find_hostile_title_escaped_and_capped():
-    line = format_find(find(title='<script>"x"</script>' + "A" * 500, url='https://a.ru/?q="><b>'), "<i>cat</i>")
-    assert "<script>" not in line and "<i>" not in line and '"><b>' not in line
-    assert len(line) < 120 * 6 + 300
+def entry(title, vpd, section, sub, **kw):
+    f = find(title=title, vpd=vpd, copies=1, hot=vpd >= 100, **kw)
+    return Entry(f, section, sub, format_card(f))
+
+
+AIMIKO = (
+    "Aimiko u2 pro premium 3000w",
+    "Aimiko U2 Pro 63V/65Ah 9a Strong",
+    "Aimiko u2 PRO 3000w",
+    "Aimiko u2 premium 3000w",
+)
+
+
+def test_group_entries_aimiko_and_stroller():
+    bike = ("velosipedy", "Электровелосипеды")
+    kids = ("tovary_dlya_detey_i_igrushki", "Коляски")
+    entries = [entry(t, v, *bike) for t, v in zip(AIMIKO, (63, 535, 134, 411), strict=True)]
+    entries.insert(2, entry("Bugaboo Dragonfly", 600, *kids))
+    groups = group_entries(entries)
+    assert [len(g) for g in groups] == [1, 4]  # группа по лучшему vpd: коляска 600 раньше Aimiko 535
+    assert [e.find.vpd for e in groups[1]] == [535, 411, 134, 63]
+    blocks = render_groups(groups)
+    assert len(blocks) == 5
+    assert blocks[0].startswith("<b>🧸 ТОВАРЫ ДЛЯ ДЕТЕЙ И ИГРУШКИ — Коляски</b>\n")
+    assert (
+        blocks[1].startswith("<b>🚲 ВЕЛОСИПЕДЫ — Электровелосипеды</b>\n🔥 <a ")
+        and "Aimiko U2 Pro 63V" in blocks[1]
+    )
+    assert all("<b>" not in b for b in blocks[2:])  # заголовок только у первой карточки группы
+    numbered = render_groups(groups, numbered=True)
+    assert numbered[0].split("\n")[1].startswith("1. ") and numbered[4].startswith("5. ")
+    assert section_emoji("unknown_slug") == "📦" and section_emoji("telefony") == "📱"
+
+
+def test_every_top_section_has_an_emoji():
+    from app.config import TOP_SECTIONS, split_csv
+
+    assert set(split_csv(TOP_SECTIONS)) <= set(SECTION_EMOJI)
+
+
+def test_split_message_never_cuts_a_card():
+    cards = [f"card {i}\n" + "x" * 300 + "\nline3" for i in range(12)]
+    chunks = split_message("\n\n".join(cards), 1000)
+    assert len(chunks) > 1 and all(len(c) <= 1000 for c in chunks)
+    assert [b for c in chunks for b in c.split("\n\n")] == cards  # только по границам карточек
+    huge = "head\n\n" + "\n".join("y" * 90 for _ in range(30))  # блок больше лимита режется по строкам
+    out = split_message(huge, 500)
+    assert out[0] == "head" and all(len(c) <= 500 for c in out)
 
 
 def test_format_progress():
@@ -162,7 +225,7 @@ def test_summary_covered_days_remaining_and_error_cap():
     errors = [f"<boom {i}>" for i in range(13)]
     text = format_summary(NOW, ["line1", "line2"], [("Телефоны", 2.0), ("Ноутбуки", 3.46)], errors, remaining=140)
     lines = text.split("\n")
-    assert lines[0] == "<b>Итог проверки — 03.10</b>" and lines[1:3] == ["line1", "line2"]
+    assert lines[0] == "<b>Итог проверки — 03.10</b>" and text.split("\n\n")[1:3] == ["line1", "line2"]
     assert "Покрыто не полностью: Телефоны — 2 из 7 дн, Ноутбуки — 3.5 из 7 дн" in lines
     assert sum(1 for x in lines if x.startswith("ошибка:")) == 10 and "и ещё 3" in lines
     assert "&lt;boom 0&gt;" in text and "<boom" not in text
@@ -206,9 +269,9 @@ def test_goofish_query():
     assert goofish_url("Коляска") is None
 
 
-def test_format_find_goofish_link_only_with_model():
-    assert 'href="https://www.goofish.com/search?q=Sony+A7">🔎 goofish</a>' in format_find(find(title="Sony A7"), "c")
-    assert "goofish" not in format_find(find(title="Коляска детская"), "c")
+def test_format_card_goofish_link_only_with_model():
+    assert 'href="https://www.goofish.com/search?q=Sony+A7">🔎 goofish</a>' in format_card(find(title="Sony A7"))
+    assert "goofish</a>" not in format_card(find(title="Коляска детская"))
 
 
 def test_goofish_digits_next_to_latin_and_nothing_invented():
@@ -276,9 +339,9 @@ def test_margin_and_weight():
 
 
 def test_find_line_shows_id_when_known():
-    assert " · #123" in format_find(find(id=123), "c") and "#" not in format_find(find(), "c")
+    assert format_card(find(id=123)).endswith(" · #123") and "#" not in format_card(find())
 
 
 def test_summary_includes_models_block():
     text = format_summary(NOW, ["l"], models=["<b>🔁 Модели</b>", "m"])
-    assert text.split("\n")[1:4] == ["l", "<b>🔁 Модели</b>", "m"]
+    assert text.split("\n\n")[1:3] == ["l", "<b>🔁 Модели</b>\nm"]

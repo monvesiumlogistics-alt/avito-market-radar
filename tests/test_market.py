@@ -626,7 +626,8 @@ async def test_already_seen_from_db_marks_date(tmp_path):
     await t.crawler._task
     lines = next(x for x in t.notifier.sent if "A — находки" in x).split("\n")
     i_new, i_seen = (next(i for i, ln in enumerate(lines) if f"Item A {n}" in ln) for n in (2, 1))
-    assert i_new < i_seen and "уже было 20.09" in lines[i_seen] and "уже было" not in lines[i_new]
+    assert "уже было 20.09" in lines[i_seen + 1] and "уже было" not in lines[i_new + 1]  # дата — во 2-й строке карточки
+    assert i_seen < i_new  # группы по лучшему vpd: A 1 (300) раньше A 2 (150)
 
 
 def test_mark_interrupted(tmp_path):

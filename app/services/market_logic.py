@@ -6,10 +6,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import groupby
+from typing import NamedTuple
 from urllib.parse import quote_plus
 
 from app.config import Settings
-from app.db import Category, Find
+from app.db import Category
 from app.models import Listing
 from app.services.matcher import normalize
 
@@ -158,11 +159,6 @@ def crawl_order(
         best.setdefault(c.section, prio(c))
     rank = {sec: i for i, sec in enumerate(sorted(best, key=lambda sec: -best[sec]))}
     return sorted(todo, key=lambda c: rank[c.section])  # sorted стабилен: внутри раздела порядок по приоритету
-
-
-def sort_finds(finds: Sequence, seen: Mapping[str, datetime]) -> list:
-    """🔥 первыми, затем новые перед «уже было», затем по vpd. finds: .hot .vpd .group_key; seen: group_key -> дата."""
-    return sorted(finds, key=lambda f: (not f.hot, f.group_key in seen, -f.vpd))
 
 
 GOOFISH_STOP = {"new", "original", "orig", "size", "cm", "mm", "kg", "set", "lot"}  # pro/max/mini — части моделей
@@ -366,22 +362,124 @@ def format_gone(finds: Sequence) -> list[str]:
     return lines
 
 
-def format_find(f: Find, category: str, seen_on: datetime | None = None) -> str:
-    """Одна строка = одна группа. Каждая строка самодостаточна по тегам (резать можно по границам строк)."""
-    price = f"{_rub(f.price_min)} ₽" if f.price_min == f.price_max else f"{_rub(f.price_min)}–{_rub(f.price_max)} ₽"
-    views = f"{f.vpd}/день" + (f" (+{f.today} сегодня)" if f.today is not None else "")
-    age = f"{max(round(f.age_days), 1)} дн" if f.date_checked else "дата не проверена"
-    parts = [price, views, age, f"выставлено {f.copies} {_times(f.copies)}", html.escape(category)]
-    if seen_on:
-        parts.append(f"уже было {seen_on:%d.%m}")
+SECTION_EMOJI = {
+    "telefony": "📱", "audio_i_video": "🎧", "tovary_dlya_kompyutera": "🖱", "noutbuki": "💻",
+    "nastolnye_kompyutery": "🖥", "planshety_i_elektronnye_knigi": "📲", "orgtehnika_i_rashodniki": "🖨",
+    "fototehnika": "📷", "igry_pristavki_i_programmy": "🎮", "bytovaya_tehnika": "🏠",
+    "odezhda_obuv_aksessuary": "👕", "detskaya_odezhda_i_obuv": "👶", "tovary_dlya_detey_i_igrushki": "🧸",
+    "chasy_i_ukrasheniya": "⌚", "krasota_i_zdorove": "💄", "remont_i_stroitelstvo": "🔧",
+    "mebel_i_interer": "🛋", "posuda_i_tovary_dlya_kuhni": "🍳", "kollektsionirovanie": "🪙",
+    "muzykalnye_instrumenty": "🎛", "ohota_i_rybalka": "🎣", "sport_i_otdyh": "⚽", "velosipedy": "🚲",
+    "tovary_dlya_zhivotnyh": "🐾", "zapchasti_i_aksessuary": "🚗",
+}  # fmt: skip
+SHORT_TITLE = 60
+MAX_REASONS = 3
+
+
+def section_emoji(slug: str) -> str:
+    return SECTION_EMOJI.get(slug, "📦")
+
+
+def group_header(section: str, sub: str) -> str:
+    return f"<b>{section_emoji(section)} {html.escape(section_name(section).upper())} — {html.escape(sub)}</b>"
+
+
+def reason(f, vpd_hot: int = 100, min_price: int = 10000, model_count: int = 1) -> str:
+    """Почему находка: 1-3 коротких довода по приоритету (ушло, спрос, копии, модель, свежесть, бренд, чек)."""
+    out = []
     if gone := gone_days(f):
-        parts.append(f"✅ ушло за {gone} дн")
-    if (find_id := getattr(f, "id", None)) is not None:
-        parts.append(f"#{find_id}")  # для /price <id> <юани>
+        out.append(f"✅ ушло за {gone} дн — реально покупают")
+    out.append(f"очень высокий спрос: {f.vpd} просм/день" if f.vpd >= vpd_hot else f"спрос {f.vpd} просм/день")
+    if f.copies >= 2:
+        out.append(f"выставлено {f.copies} {_times(f.copies)} — товар ходовой")
+    if model_count >= 2:
+        out.append(f"модель встречается {model_count} {_times(model_count)}")
+    if f.age_days <= 1:
+        out.append("свежее (≤1 дн)")
+    if goofish_query(f.title):
+        out.append("есть бренд/модель — легко найти на goofish")
+    if f.price_min >= min_price * 3:
+        out.append("дорогой чек — маржа в рублях выше")
+    return "; ".join(out[:MAX_REASONS])
+
+
+def format_card(
+    f,
+    seen_on: datetime | None = None,
+    *,
+    vpd_hot: int = 100,
+    min_price: int = 10000,
+    model_count: int = 1,
+    margin: str | None = None,
+) -> str:
+    """Карточка находки, 3-5 строк (резать можно только между карточками, см. split_message)."""
+    title = html.escape(f.title[:SHORT_TITLE]) + ("…" if len(f.title) > SHORT_TITLE else "")
+    head = f'{"🔥 " if f.hot else ""}<a href="{html.escape(f.url)}">{title}</a>' + (
+        f" ×{f.copies}" if f.copies > 1 else ""
+    )
+    price = f"{_rub(f.price_min)} ₽" if f.price_min == f.price_max else f"{_rub(f.price_min)}–{_rub(f.price_max)} ₽"
+    views = f"{f.vpd}/день"
+    detail = [f"+{f.today} сегодня"] if f.today is not None else []
+    total = getattr(f, "views", None)
+    if total is not None:
+        detail.append(f"всего {total}")
+    if detail:
+        views += f" ({', '.join(detail)})"
+    day = getattr(f, "seller_date", None) or getattr(f, "page_date", None)
+    age = f"{max(round(f.age_days), 1)} дн"
+    when = f"{day:%d.%m} ({age})" if day else f"~{age}"
+    if not f.date_checked:
+        when = f"{day:%d.%m} (дата не проверена)" if day else "дата не проверена"
+    info = f"💰 {price} · 👁 {views} · 📅 {when}"
+    if seen_on:
+        info += f" · уже было {seen_on:%d.%m}"
+    lines = [head, info, "💡 " + reason(f, vpd_hot, min_price, model_count)]
+    if margin:
+        lines.append("💱 " + margin)
+    tail = []
     if goofish := goofish_url(f.title):
-        parts.append(f'<a href="{html.escape(goofish)}">🔎 goofish</a>')
-    link = f'<a href="{html.escape(f.url)}">{html.escape(f.title[:TITLE_CAP])}</a>'
-    return f"{'🔥 ' if f.hot else ''}{link} — " + " · ".join(parts)
+        tail.append(f'<a href="{html.escape(goofish)}">🔎 goofish</a>')
+    if (find_id := getattr(f, "id", None)) is not None:
+        tail.append(f"#{find_id}")  # для /price <id> <юани>
+    if tail:
+        lines.append(" · ".join(tail))
+    return "\n".join(lines)
+
+
+def model_counts(finds: Sequence) -> dict[str, int]:
+    """Сколько разных объявлений у каждой модели (для довода «модель встречается N раз»)."""
+    seen: dict[str, set] = {}
+    for f in finds:
+        if key := model_key(f.title):
+            seen.setdefault(key, set()).add(getattr(f, "external_id", f.title))
+    return {k: len(v) for k, v in seen.items()}
+
+
+class Entry(NamedTuple):
+    find: object
+    section: str
+    sub: str
+    card: str  # без номера и заголовка группы
+
+
+def group_entries(entries: Sequence[Entry]) -> list[list[Entry]]:
+    """По (раздел, подкатегория): внутри по vpd, группы по лучшему vpd; вся раскладка детерминирована."""
+    groups: dict[tuple[str, str], list[Entry]] = {}
+    for e in entries:
+        groups.setdefault((e.section, e.sub), []).append(e)
+    out = [sorted(g, key=lambda e: -e.find.vpd) for g in groups.values()]
+    return sorted(out, key=lambda g: -g[0].find.vpd)
+
+
+def render_groups(groups: Sequence[Sequence[Entry]], numbered: bool = False) -> list[str]:
+    """Блоки для split_message: карточка = блок, заголовок группы приклеен к её первой карточке."""
+    blocks, n = [], 0
+    for g in groups:
+        for i, e in enumerate(g):
+            n += 1
+            block = f"{n}. {e.card}" if numbered else e.card
+            blocks.append(f"{group_header(e.section, e.sub)}\n{block}" if i == 0 else block)
+    return blocks
 
 
 def format_progress(sections_done: int, sections_total: int, subcats: int, loads: int, budget: int, finds: int) -> str:
@@ -403,26 +501,22 @@ def format_summary(
     models: Sequence[str] = (),
     gone: Sequence[str] = (),
 ) -> str:
-    """Итог прогона. covered: (подкатегория, дней покрыто) только там, где неделя не вошла в лимит страниц."""
-    lines = [
-        f"<b>Итог проверки — {day:%d.%m}</b>",
-        *([note] if note else []),
-        *([totals] if totals else []),
-        *(find_lines or ["Находок нет."]),
-        *models,
-        *gone,
-    ]
+    """Итог прогона. find_lines — блоки (карточки), разделяются пустой строкой, чтобы split_message не резал карточку.
+    covered: (подкатегория, дней покрыто) только там, где неделя не вошла в лимит страниц."""
+    head = [f"<b>Итог проверки — {day:%d.%m}</b>", *([note] if note else []), *([totals] if totals else [])]
+    tail = []
     if covered:
-        lines.append(
+        tail.append(
             "Покрыто не полностью: "
             + ", ".join(f"{html.escape(n)} — {round(d, 1):g} из {max_age_days} дн" for n, d in covered)
         )
-    lines += [f"ошибка: {html.escape(e[:200])}" for e in errors[:MAX_ERRORS]]
+    tail += [f"ошибка: {html.escape(e[:200])}" for e in errors[:MAX_ERRORS]]
     if len(errors) > MAX_ERRORS:
-        lines.append(f"и ещё {len(errors) - MAX_ERRORS}")
+        tail.append(f"и ещё {len(errors) - MAX_ERRORS}")
     if remaining:
-        lines.append(f"Осталось {remaining} подкатегорий, пойдут первыми в следующий раз.")
-    return "\n".join(lines)
+        tail.append(f"Осталось {remaining} подкатегорий, пойдут первыми в следующий раз.")
+    blocks = ["\n".join(head), *(find_lines or ["Находок нет."]), "\n".join(models), "\n".join(gone), "\n".join(tail)]
+    return "\n\n".join(b for b in blocks if b)
 
 
 def _cut_at(line: str, limit: int) -> int:
@@ -445,8 +539,7 @@ def _cut_at(line: str, limit: int) -> int:
     return cut or limit
 
 
-def split_message(text: str, limit: int = TG_LIMIT) -> list[str]:
-    """Режет по границам строк; строка длиннее limit (бывает «Покрыто не полностью») режется по «, »."""
+def _split_lines(text: str, limit: int) -> list[str]:
     chunks: list[str] = []
     current = ""
     for line in text.split("\n"):
@@ -463,6 +556,27 @@ def split_message(text: str, limit: int = TG_LIMIT) -> list[str]:
             current = line
         else:
             current = f"{current}\n{line}" if current else line
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def split_message(text: str, limit: int = TG_LIMIT) -> list[str]:
+    """Блоки (разделены пустой строкой, напр. карточки) не режутся; блок длиннее limit режется по строкам, строка
+    длиннее limit (бывает «Покрыто не полностью») — по «, »."""
+    chunks: list[str] = []
+    current = ""
+    for block in text.split("\n\n"):
+        if len(block) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(_split_lines(block, limit))
+        elif current and len(current) + 2 + len(block) > limit:
+            chunks.append(current)
+            current = block
+        else:
+            current = f"{current}\n\n{block}" if current else block
     if current:
         chunks.append(current)
     return chunks

@@ -271,7 +271,7 @@ def test_top_has_models_block_and_margin(tmp_path):
         db.commit()
         text = "\n".join(top_messages(db, 7, NOW))
     assert "🔁 Модели с несколькими объявлениями" in text and "aimiko u2 ×4" in text
-    assert "↳ себест. ~" in text and "¥2300×12.2" in text and "доставка 3 кг" in text  # «Аккордеоны»: вес по умолчанию
+    assert "💱 себест. ~" in text and "¥2300×12.2" in text and "доставка 3 кг" in text  # «Аккордеоны»: вес по умолчанию
 
 
 async def test_price_handler(tmp_path):
