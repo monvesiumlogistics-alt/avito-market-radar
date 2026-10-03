@@ -1,4 +1,4 @@
-"""Карта Avito из catalog.csv (по умолчанию data/catalog.csv) -> таблица categories (подкатегории + стартовый приоритет).
+"""Карта Avito из catalog.csv (по умолчанию data/catalog.csv) -> categories (подкатегории + стартовый приоритет).
 
 Запуск (можно при работающем боте, пишет только в БД):
     PYTHONIOENCODING=utf-8 .venv/Scripts/python -m scripts.import_map [путь к catalog.csv]
