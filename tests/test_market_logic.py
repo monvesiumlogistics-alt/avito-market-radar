@@ -11,18 +11,19 @@ from app.services.market_logic import (
     date_checked,
     find_age,
     format_card,
+    format_line,
+    format_model_lines,
     format_progress,
-    format_summary,
+    format_results,
     group_cards,
-    group_entries,
     is_find,
     is_hot,
     norm_title,
     pick_cards,
     reason,
-    render_groups,
     section_emoji,
     split_message,
+    summary_tail,
 )
 
 NOW = datetime(2026, 10, 3, 12, 0)
@@ -167,7 +168,7 @@ def test_format_card_hostile_title_escaped_and_capped():
 
 def entry(title, vpd, section, sub, **kw):
     f = find(title=title, vpd=vpd, copies=1, hot=vpd >= 100, **kw)
-    return Entry(f, section, sub, format_card(f))
+    return Entry(f, section, sub, format_card(f), format_line(f))
 
 
 AIMIKO = (
@@ -178,22 +179,57 @@ AIMIKO = (
 )
 
 
-def test_group_entries_aimiko_and_stroller():
+def test_format_results_sections_expandable_models_and_order():
     bike = ("velosipedy", "Электровелосипеды")
     kids = ("tovary_dlya_detey_i_igrushki", "Коляски")
-    entries = [entry(t, v, *bike) for t, v in zip(AIMIKO, (63, 535, 134, 411), strict=True)]
-    entries.insert(2, entry("Bugaboo Dragonfly", 600, *kids))
-    groups = group_entries(entries)
-    assert [len(g) for g in groups] == [1, 4]  # группа по лучшему vpd: коляска 600 раньше Aimiko 535
-    assert [e.find.vpd for e in groups[1]] == [535, 411, 134, 63]
-    blocks = render_groups(groups)
-    assert len(blocks) == 5
-    assert blocks[0].startswith("<b>🧸 ТОВАРЫ ДЛЯ ДЕТЕЙ И ИГРУШКИ — Коляски</b>\n")
-    assert blocks[1].startswith("<b>🚲 ВЕЛОСИПЕДЫ — Электровелосипеды</b>\n🔥 <a ") and "Aimiko U2 Pro 63V" in blocks[1]
-    assert all("<b>" not in b for b in blocks[2:])  # заголовок только у первой карточки группы
-    numbered = render_groups(groups, numbered=True)
-    assert numbered[0].split("\n")[1].startswith("1. ") and numbered[4].startswith("5. ")
+    entries = [entry(t, v, *bike, id=i) for i, (t, v) in enumerate(zip(AIMIKO, (63, 535, 134, 411), strict=True), 1)]
+    from app.services.market_logic import model_groups
+
+    entries.insert(2, entry("Bugaboo Dragonfly", 600, *kids, id=9))
+    rows = [e.find for e in entries]
+    for f in rows:
+        f.external_id = str(f.id)
+    (msg,) = format_results("<b>📊 Топ находок · 7 дн</b>", "🎯 5 находок · 🔥 3", entries, model_groups(rows))
+    lines = msg.split("\n")
+    assert lines[:2] == ["<b>📊 Топ находок · 7 дн</b>", "🎯 5 находок · 🔥 3"]
+    kids_at, bike_at = msg.index("<b>🧸 Товары для детей и игрушки — 1</b>"), msg.index("<b>🚲 Велосипеды — 4</b>")
+    assert kids_at < bike_at  # разделы по лучшему vpd: коляска 600 раньше Aimiko 535
+    assert msg.count("<blockquote expandable>") == msg.count("</blockquote>") == 3  # 2 раздела + модели
+    assert msg.index("Aimiko U2 Pro 63V") < msg.index("Aimiko u2 premium 3000w") < msg.index("Aimiko u2 PRO 3000w")
+    assert "<b>🔁 Модели с несколькими объявлениями — 1</b>\n<blockquote expandable>aimiko u2 ×4 · 63–535/д" in msg
+    top_line = next(ln for ln in lines if "Aimiko U2 Pro 63V" in ln).replace("<blockquote expandable>", "")
+    assert top_line.startswith("🔥 <a ") and "· 95 000–110 000 ₽ · 535/д · " in top_line and top_line.endswith("· #2")
+    assert "🔎</a>" in top_line
     assert section_emoji("unknown_slug") == "📦" and section_emoji("telefony") == "📱"
+
+
+def test_format_line_fields_markers_and_escaping():
+    f = find(id=7, copies=3, title="Pioneer <DDJ-400> " + "x" * 60, price_min=24990, price_max=26290, vpd=535, hot=True)
+    line = format_line(f)
+    assert line.startswith('🔥 <a href="https://www.avito.ru/x_1">Pioneer &lt;DDJ-400&gt; ')
+    assert "…</a> ×3 · 24 990–26 290 ₽ · 535/д · " in line and line.endswith("</a> · #7")
+    assert len(line.split("</a>")[0]) < 120
+    plain = format_line(find(title="Коляска", price_max=95000, hot=False, copies=1))
+    assert plain == '<a href="https://www.avito.ru/x_1">Коляска</a> · 95 000 ₽ · 180/д'
+    gone = format_line(
+        find(title="Коляска", gone_at=NOW, created_at=NOW - timedelta(days=4)), seen=True, margin="💱 ~1 ₽"
+    )
+    assert "· ✅ ушло за 4 дн · уже было · 💱 ~1 ₽" in gone and "🔎" not in gone
+
+
+def test_format_results_splits_long_section_into_expandable_quotes():
+    entries = [entry(f"Item {i:03d} " + "w" * 20, 500 - i, "velosipedy", "x", id=i) for i in range(120)]
+    msgs = format_results("<b>H</b>", "S", entries, limit=1000)
+    assert len(msgs) > 3 and all(len(m) <= 1000 for m in msgs)
+    for m in msgs:
+        assert m.count("<blockquote expandable>") == m.count("</blockquote>") >= 1  # цитаты целые
+    text = "\n\n".join(msgs)
+    assert text.count("<b>🚲 Велосипеды — 120</b>") == 1 and "<b>🚲 Велосипеды (продолжение)</b>" in text
+    assert [int(x[:3]) for x in text.split("Item ")[1:]] == list(range(120))  # порядок по vpd, ничего не потеряно
+    big = format_results("<b>H</b>", "S", entries * 3)  # реальный лимит 4096
+    assert all(len(m) <= 4096 for m in big) and len(big) >= 2
+    assert "Находок нет." in format_results("<b>H</b>", "S", [])[0]
+    assert format_results("<b>H</b>", "S", [], tail=["хвост"])[0].endswith("хвост")
 
 
 def test_every_top_section_has_an_emoji():
@@ -239,17 +275,14 @@ def test_format_progress_bar_eta_and_states():
     assert format_progress(5, 1, 600, 0, 0, status="failed").startswith("<b>⚠️ Проверка упала</b>")
 
 
-def test_summary_covered_days_remaining_and_error_cap():
+def test_summary_tail_covered_days_remaining_and_error_cap():
     errors = [f"<boom {i}>" for i in range(13)]
-    text = format_summary(NOW, ["line1", "line2"], [("Телефоны", 2.0), ("Ноутбуки", 3.46)], errors, remaining=140)
-    lines = text.split("\n")
-    assert lines[0] == "<b>Итог проверки — 03.10</b>" and text.split("\n\n")[1:3] == ["line1", "line2"]
-    assert "Покрыто не полностью: Телефоны — 2 из 7 дн, Ноутбуки — 3.5 из 7 дн" in lines
-    assert sum(1 for x in lines if x.startswith("ошибка:")) == 10 and "и ещё 3" in lines
-    assert "&lt;boom 0&gt;" in text and "<boom" not in text
-    assert lines[-1] == "Осталось 140 подкатегорий, пойдут первыми в следующий раз."
-    plain = format_summary(NOW, [])
-    assert "Находок нет." in plain and "Осталось" not in plain and "Покрыто" not in plain
+    tail = summary_tail([("Телефоны", 2.0), ("Ноутбуки", 3.46)], errors, 140, 7)
+    assert tail[0] == "Покрыто не полностью: Телефоны — 2 из 7 дн, Ноутбуки — 3.5 из 7 дн"
+    assert sum(1 for x in tail if x.startswith("ошибка:")) == 10 and "и ещё 3" in tail
+    assert "&lt;boom 0&gt;" in "\n".join(tail) and "<boom" not in "\n".join(tail)
+    assert tail[-1] == "Осталось 140 подкатегорий, пойдут первыми в следующий раз."
+    assert summary_tail([], [], 0, 7) == []
 
 
 def test_split_message_chunks_and_tags():
@@ -325,7 +358,7 @@ def test_model_key_groups_all_four_real_aimiko_titles():
 
 
 def test_model_groups_and_format():
-    from app.services.market_logic import format_models, model_groups
+    from app.services.market_logic import model_groups
 
     rows = [
         NS(title=t, vpd=v, price_min=p, price_max=p, url=f"https://www.avito.ru/x_{i}", external_id=str(i))
@@ -334,10 +367,10 @@ def test_model_groups_and_format():
     (g,) = model_groups(rows)  # Wenbox встретился один раз — не модель с несколькими объявлениями
     assert (g.key, g.count, g.vpd_min, g.vpd_max, g.price_min, g.price_max) == ("aimiko u2", 4, 63, 535, 49900, 120000)
     assert g.best.external_id == "1"
-    lines = format_models([g])
-    assert lines[0].startswith("<b>🔁 Модели") and "aimiko u2 ×4 · 63–535/день · 49 900–120 000 ₽" in lines[1]
-    assert 'href="https://www.avito.ru/x_1">лучшее</a>' in lines[1] and "🔎 goofish" in lines[1]
-    assert format_models([]) == []
+    (line,) = format_model_lines([g])
+    assert line.startswith("aimiko u2 ×4 · 63–535/д · ")
+    assert 'href="https://www.avito.ru/x_1">лучшее</a>' in line and "🔎</a>" in line
+    assert format_model_lines([]) == []
     dup = [rows[0], NS(**{**rows[0].__dict__})]  # одно объявление, найденное дважды
     assert model_groups(dup) == []
 
@@ -358,8 +391,3 @@ def test_margin_and_weight():
 
 def test_find_line_shows_id_when_known():
     assert format_card(find(id=123)).endswith(" · #123") and "#" not in format_card(find())
-
-
-def test_summary_includes_models_block():
-    text = format_summary(NOW, ["l"], models=["<b>🔁 Модели</b>", "m"])
-    assert text.split("\n\n")[1:3] == ["l", "<b>🔁 Модели</b>\nm"]

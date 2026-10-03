@@ -94,3 +94,10 @@
 ## ADR-012: Live progress message (2026-10-04)
 - One message, edited in place: header with the elapsed time since this `/report` press, a 10-char bar by loads/budget, ETA = elapsed / loads x (budget - loads) (shown from 10 loads), «Сейчас» (current section and subcategory, «перепроверка находок», «🧩 жду проверку капчи»), counters with hot finds. A background ticker edits it every `PROGRESS_EDIT_SECONDS` (default 20, 0 = only after each subcategory); an edit is skipped when the text is unchanged. On finish the header is replaced (✅ with time / ⏹ / ⚠️). Pure formatter `format_progress`.
 
+
+## ADR-013: Results format D, hot finds sent immediately (2026-10-04)
+- Status: accepted (user picked design D). Supersedes the per-section portions and the numbered 👍/👎 keyboards of ADR-007/ADR-011.
+- During `/report` the only recurring message is the live progress message. Each 🔥 find is sent right after its subcategory is saved, as one `format_card` message with a 👍/👎 row (`fb:<id>:±1`); `Find.sent` now means "that card was sent". Non-hot finds appear only in the final summary.
+- Final summary and `/top` share `format_results`: `<b>📊 Проверка рынка · DD.MM</b>` (`📊 Топ находок · N дн` for `/top`), stats line (`🎯 N находок · 🔥 K · 📂 M подкатегорий`), status note, `✅ ушло: X`, then per section `<b><emoji> <Name> — <count></b>` + `<blockquote expandable>` with one `format_line` per find (sorted by vpd, sections by best vpd), a models block in its own expandable quote, and a compact tail (covered days, errors, remaining). The summary lists all finds of the run (hot ones too, marked 🔥) plus finds that went away at recheck (with ✅). `/top` shows margin in the line when the China price is known (`💱 ~M ₽ (N%)`).
+- Splitting: blocks are packed into messages <= 4096 chars; a section that does not fit is split into several quotes headed «(продолжение)», never inside a tag.
+- Removed: `_portion`, `format_summary`, `format_gone`, `format_models`, `group_entries`, `render_groups`, numbered buttons.

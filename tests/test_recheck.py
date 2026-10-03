@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 
 from app.db import Find
 from app.providers.avito_parser import is_gone
-from app.services.market_logic import format_card, format_gone, format_models, model_groups
+from app.services.market_logic import format_card, format_line, format_model_lines, model_groups
 from tests.test_cmds import add_find  # noqa: F401
 from tests.test_market import FIXTURES, NOW, card_url, item_html, life, rows, runs, summary_text
 
@@ -63,8 +63,10 @@ async def test_gone_alive_young_old_and_summary(tmp_path):
     assert f["y1"].last_checked_at is None and f["o1"].last_checked_at is None
     assert card_url("y1") not in t.provider.calls and card_url("o1") not in t.provider.calls
     text = summary_text(t)
-    assert "✅ Ушло: 1 (за ~3 дн)" in text and "Bugaboo Dragonfly" in text and "ушло за 3 дн" in text
-    assert "Cybex" not in text
+    assert "✅ ушло: 1" in text and "ушло за 3 дн" in text
+    bug = next(ln for ln in text.split("\n") if "Bugaboo Dragonfly" in ln)
+    cybex = next(ln for ln in text.split("\n") if "Cybex" in ln)
+    assert "✅ ушло за 3 дн" in bug and "ушло" not in cybex  # живая — без отметки
     assert runs(t)[0].loads == t.crawler.loads  # перепроверка в бюджете и в статистике
 
 
@@ -87,7 +89,7 @@ async def test_recheck_limit_disabled_duplicates_and_budget(tmp_path):
     t.pages[card_url("d1")] = GONE
     await go(t)
     assert t.provider.calls.count(card_url("d1")) == 1 and all(f.gone_at for f in rows(t) if f.external_id == "d1")
-    assert summary_text(t).count("✅ Ушло: 1") == 1
+    assert summary_text(t).count("✅ ушло: 1") == 1
 
     t = run_life(tmp_path / "d", report_budget=2)  # warm-up + одна перепроверка, на обход бюджета нет
     for i in (1, 2):
@@ -123,8 +125,7 @@ def test_format_gone_find_line_and_models():
            created_at=NOW - timedelta(days=4), gone_at=gone_at, hot=True, today=None, age_days=2, date_checked=True,
            copies=1, group_key="g", external_id="1")  # fmt: skip
     assert "✅ ушло за 4 дн — реально покупают" in format_card(f)
-    assert format_gone([]) == []
-    assert "ушло за 4 дн · 200/день · 1 000 ₽" in format_gone([f])[1]
+    assert "· 1 000 ₽ · 200/д · ✅ ушло за 4 дн" in format_line(f)
     g = NS(**{**f.__dict__, "external_id": "2", "gone_at": None, "title": "Bugaboo Dragonfly blue"})
     f.title = "Bugaboo Dragonfly red"
-    assert "✅ ушло 1" in format_models(model_groups([f, g]))[1]
+    assert "✅ ушло 1" in format_model_lines(model_groups([f, g]))[0]

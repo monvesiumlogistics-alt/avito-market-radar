@@ -14,14 +14,13 @@ from app.services.market_logic import (
     Entry,
     calc_margin,
     format_card,
+    format_line,
     format_margin,
-    format_models,
+    format_results,
     goofish_url,
-    group_entries,
     model_counts,
     model_groups,
     model_key,
-    render_groups,
     section_name,
     split_message,
     weight_kg,
@@ -73,8 +72,19 @@ def entries_for(
             model_count=counts.get(model_key(f.title) or "", 1),
             margin=margin_text(f, name, s),
         )
-        out.append(Entry(f, cat.section if cat else "", name, card))
+        line = format_line(f, f.group_key in (seen or {}), margin_short(f, name, s))
+        out.append(Entry(f, cat.section if cat else "", name, card, line))
     return out
+
+
+def margin_short(f: Find, category: str, s: Settings) -> str | None:
+    """Маржа для строки итога: «💱 ~14 940 ₽ (30%)», если известна цена в Китае."""
+    if not f.china_price:
+        return None
+    m = calc_margin(
+        f.price_min, f.china_price, weight_kg(f.title, category), s.cny_rate, s.cargo_rub_per_kg, s.cargo_air_rub_per_kg
+    )
+    return f"💱 ~{m.margin:,} ₽ ({m.pct}%)".replace(",", " ")
 
 
 def top_messages(db: Session, days: int, now: datetime, s: Settings | None = None) -> list[str]:
@@ -83,10 +93,9 @@ def top_messages(db: Session, days: int, now: datetime, s: Settings | None = Non
         return [f"За {days} дн находок нет."]
     s = s or Settings(_env_file=None)
     window = _window(db, days, now)
-    blocks = render_groups(group_entries(entries_for(db, finds, s, all_finds=window)))
-    models = format_models(model_groups(window))
-    parts = [f"<b>Топ находок за {days} дн</b>", *blocks, *(["\n".join(models)] if models else [])]
-    return split_message("\n\n".join(parts))
+    entries = entries_for(db, finds, s, all_finds=window)
+    stats = f"🎯 {len(finds)} находок · 🔥 {sum(bool(f.hot) for f in finds)}"
+    return format_results(f"<b>📊 Топ находок · {days} дн</b>", stats, entries, model_groups(window))
 
 
 def set_price(db: Session, find_id: int, yuan: int, s: Settings) -> str | None:

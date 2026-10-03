@@ -155,7 +155,7 @@ async def test_resume_gets_fresh_budget_and_cumulative_loads(tmp_path):
 # --- Итог: только неотправленное ---
 
 
-async def test_summary_only_unsent_finds_plus_totals(tmp_path):
+async def test_summary_has_all_finds_once_even_when_stopped(tmp_path):
     t = life(tmp_path, {"A": [900], "B": [900, 900]})
     from tests.test_market import hook
 
@@ -163,9 +163,9 @@ async def test_summary_only_unsent_finds_plus_totals(tmp_path):
     t.crawler.start()
     await t.crawler._task
     text = summary_text(t)
-    assert "Item B 1" in text and "Item A 1" not in text  # A ушла порцией, B 1 — нет
-    assert "Всего: найдено 2, 🔥 2, подкатегорий 2, загрузок" in text
-    assert sum(1 for x in t.notifier.sent if "Item A 1" in x) == 1
+    assert "Item B 1" in text and "Item A 1" in text  # итог — все находки прогона, 🔥 тоже (ADR-013)
+    assert "🎯 2 находок · 🔥 2 · 📂 2 подкатегорий" in text
+    assert text.count("Item A 1") == 1
 
 
 async def test_progress_send_failure_not_retried_every_minute(tmp_path):
@@ -189,14 +189,14 @@ async def test_finish_db_error_still_sends_summary(tmp_path):
     t.crawler._finish = boom
     t.crawler.start()
     await t.crawler._task
-    assert "Итог проверки" in summary_text(t)
+    assert "📊 Проверка рынка" in summary_text(t)
 
 
-async def test_portion_header_uses_escaped_section_name(tmp_path):
+async def test_summary_section_header_uses_escaped_section_name(tmp_path):
     t = life(tmp_path, {"A&B": [900]})
     t.crawler.start()
     await t.crawler._task
-    assert any("<b>A&amp;B — находки</b>" in x for x in t.notifier.sent)
+    assert "<b>📦 A&amp;B — 1</b>" in summary_text(t)
 
 
 def test_section_names_cover_all_top_sections():

@@ -2,7 +2,6 @@
 
 import asyncio
 import contextlib
-import html
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -38,26 +37,20 @@ from app.services.market_logic import (
     current_label,
     date_checked,
     find_age,
-    format_gone,
-    format_models,
     format_progress,
-    format_summary,
+    format_results,
     group_cards,
-    group_entries,
     is_find,
     is_hot,
     model_groups,
     norm_title,
     pick_groups,
-    render_groups,
-    section_name,
-    split_message,
+    summary_tail,
 )
 
 log = logging.getLogger(__name__)
 
 RESUMABLE = ("running", "stopped", "blocked", "interrupted", "failed")  # budget/done: следующий прогон новый
-FEEDBACK_MAX_FINDS = 8  # кнопки 👍/👎 только у порции до 8 находок (лимит клавиатуры Telegram)
 MAX_ERROR_STREAK = 3
 RECHECK_MIN_AGE = timedelta(days=2)  # перепроверяем находки возрастом 2-14 дней
 RECHECK_MAX_AGE = timedelta(days=14)
@@ -262,7 +255,7 @@ class MarketCrawler:
             )  # 👍/👎 из кнопок под порциями
             order = crawl_order(self._categories(db), self.run_id, self.clock(), fb)
         streak = 0
-        for i, cat in enumerate(order):
+        for cat in order:
             if self.stop_requested:
                 raise StopRequested
             if self.loads >= self.settings.report_budget:
@@ -273,8 +266,6 @@ class MarketCrawler:
                 log.error("[MARKET] %d ошибок подряд, прогон остановлен", streak)
                 raise BreakerTripped
             await self._send_progress()
-            if i + 1 == len(order) or order[i + 1].section != cat.section:
-                await self._portion(cat.section)
 
     def _categories(self, db) -> list[Category]:
         return list(
@@ -328,16 +319,12 @@ class MarketCrawler:
         else:
             await self.notifier.edit_text(self._progress_id, text)
 
-    async def _send(self, text: str, markup=None) -> bool:
+    async def _send_many(self, texts: list[str]) -> bool:
         ok = True
-        chunks = split_message(text)
-        for i, chunk in enumerate(chunks):
+        for i, text in enumerate(texts):
             if i:
-                await asyncio.sleep(self.send_delay)
-            if markup is not None and len(chunks) == 1:
-                ok &= await self.notifier.send_text(chunk, markup) is not None
-            else:
-                ok &= await self.notifier.send_text(chunk) is not None
+                await asyncio.sleep(self.send_delay)  # лимиты Telegram
+            ok &= await self.notifier.send_text(text) is not None
         return ok
 
     def _entries(self, db, finds: list[Find]):
@@ -355,36 +342,24 @@ class MarketCrawler:
         run_finds = list(db.scalars(select(Find).where(Find.run_id == self.run_id)))
         return entries_for(db, finds, self.settings, seen, run_finds)
 
-    async def _portion(self, section: str) -> None:
-        """Находки только что пройденного раздела (AC-4.2)."""
-        with self.session_factory() as db:
-            finds = list(
-                db.scalars(
-                    select(Find)
-                    .join(Category, Find.category_id == Category.id)
-                    .where(Find.run_id == self.run_id, Find.sent.is_(False), Category.section == section)
-                )
-            )
-            if not finds:
-                return
-            groups = group_entries(self._entries(db, finds))
-            ordered = [e.find for g in groups for e in g]
-            markup = None
-            if len(ordered) <= FEEDBACK_MAX_FINDS:  # под порцией: ряд кнопок на находку, номер = номер карточки
+    async def _send_hot(self, finds: list[Find]) -> None:
+        """🔥 находки уходят сразу, по одной карточке с кнопками 👍/👎; остальные только в итоге (ADR-013)."""
+        for f in (f for f in finds if f.hot):
+            try:
+                with self.session_factory() as db:
+                    (entry,) = self._entries(db, [f])
                 markup = InlineKeyboardMarkup(
                     inline_keyboard=[
                         [
-                            InlineKeyboardButton(text=f"👍 {n}", callback_data=f"fb:{f.id}:1"),
-                            InlineKeyboardButton(text=f"👎 {n}", callback_data=f"fb:{f.id}:-1"),
+                            InlineKeyboardButton(text="👍", callback_data=f"fb:{f.id}:1"),
+                            InlineKeyboardButton(text="👎", callback_data=f"fb:{f.id}:-1"),
                         ]
-                        for n, f in enumerate(ordered, 1)
                     ]
                 )
-            head = f"<b>{html.escape(section_name(section))} — находки</b>"
-            text = "\n\n".join([head, *render_groups(groups, numbered=markup is not None)])
-            ids = [f.id for f in finds]
-        if await self._send(text, markup):  # Telegram не принял — sent=0, находки всё равно попадут в итог
-            self._mark_sent(ids)
+                if await self.notifier.send_text(entry.card, markup) is not None:
+                    self._mark_sent([f.id])  # sent = карточка уже ушла отдельным сообщением
+            except Exception:
+                log.exception("[MARKET] 🔥 находка не отправлена сразу, будет в итоге")
 
     def _mark_sent(self, ids: list[int]) -> None:
         with self.session_factory() as db:
@@ -392,11 +367,10 @@ class MarketCrawler:
             db.commit()
 
     async def _summary(self, status: str) -> None:
-        """Итог: счётчики + только ещё не отправленные находки (остальные ушли порциями, ADR-007)."""
+        """Итог (формат D): все находки прогона (и 🔥 тоже) по разделам + ушедшие при перепроверке (ADR-013)."""
         s = self.settings
         with self.session_factory() as db:
             finds = list(db.scalars(select(Find).where(Find.run_id == self.run_id)))
-            unsent = [f for f in finds if not f.sent]
             gone = list(db.scalars(select(Find).where(Find.id.in_(self.gone_ids)))) if self.gone_ids else []
             cats = self._categories(db)
             done = [c for c in cats if c.last_run_id == self.run_id]
@@ -407,29 +381,19 @@ class MarketCrawler:
                 if c.last_days_covered < s.report_max_age_days
             ]
             remaining = len(cats) - len(done)
-            loads = db.get(CrawlRun, self.run_id).loads + self.loads - self._loads_saved
-            totals = (
-                f"Всего: найдено {len(finds)}, 🔥 {sum(f.hot for f in finds)}, "
-                f"подкатегорий {len(done)}, загрузок {loads}"
+            shown = finds + [g for g in gone if g.id not in {f.id for f in finds}]
+            entries = self._entries(db, shown)
+            stats = f"🎯 {len(finds)} находок · 🔥 {sum(bool(f.hot) for f in finds)} · 📂 {len(done)} подкатегорий"
+            notes = [n for n in (STATUS_NOTES.get(status), f"✅ ушло: {len(gone)}" if gone else None) if n]
+            texts = format_results(
+                f"<b>📊 Проверка рынка · {self.clock():%d.%m}</b>",
+                stats,
+                entries,
+                model_groups(shown),
+                notes,
+                summary_tail(covered, self.errors, remaining if status != "done" else 0, s.report_max_age_days),
             )
-            lines = render_groups(group_entries(self._entries(db, unsent))) or (
-                ["Новых находок нет, остальные отправлены выше."] if finds else []
-            )
-            text = format_summary(
-                self.clock(),
-                lines,
-                covered,
-                self.errors,
-                remaining if status != "done" else 0,
-                s.report_max_age_days,
-                STATUS_NOTES.get(status),
-                totals,
-                format_models(model_groups(finds)),
-                format_gone(gone),
-            )
-            ids = [f.id for f in unsent]
-        if await self._send(text) and ids:
-            self._mark_sent(ids)
+        await self._send_many(texts)
 
     # --- загрузки ---
 
@@ -622,6 +586,7 @@ class MarketCrawler:
             self._save(cat_id, error=True)
             return False
         self._save(cat_id, finds=finds, best_vpd=best_vpd, covered=covered)
+        await self._send_hot(finds)
         return True
 
     async def _collect(self, url: str, name: str) -> tuple[list[Listing], float]:

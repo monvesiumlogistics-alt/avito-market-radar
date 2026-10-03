@@ -252,27 +252,6 @@ def model_groups(finds: Sequence) -> list[ModelGroup]:
     return sorted(groups, key=lambda g: -g.count * g.vpd_max)
 
 
-def format_models(groups: Sequence[ModelGroup]) -> list[str]:
-    if not groups:
-        return []
-    lines = ["<b>🔁 Модели с несколькими объявлениями</b>"]
-    for g in groups:
-        vpd = f"{g.vpd_min}" if g.vpd_min == g.vpd_max else f"{g.vpd_min}–{g.vpd_max}"
-        price = f"{_rub(g.price_min)} ₽" if g.price_min == g.price_max else f"{_rub(g.price_min)}–{_rub(g.price_max)} ₽"
-        parts = [
-            f"{html.escape(g.key)} ×{g.count}",
-            f"{vpd}/день",
-            price,
-            f'<a href="{html.escape(g.best.url)}">лучшее</a>',
-        ]
-        if g.gone:
-            parts.append(f"✅ ушло {g.gone}")
-        if gf := goofish_url(g.best.title):
-            parts.append(f'<a href="{html.escape(gf)}">🔎 goofish</a>')
-        lines.append(" · ".join(parts))
-    return lines
-
-
 # --- маржа ---
 
 WEIGHT_PRESETS = (  # (регулярка по названию + категории в нижнем регистре, кг); первое совпадение, порядок важен
@@ -349,19 +328,6 @@ def gone_days(f) -> int | None:
     return max(round((gone_at - f.created_at).total_seconds() / 86400), 1) if gone_at else None
 
 
-def format_gone(finds: Sequence) -> list[str]:
-    """Блок итога «ушло»: сколько и за сколько дней в среднем, затем строки (название-ссылка, дней, vpd, цена)."""
-    if not finds:
-        return []
-    days = [gone_days(f) for f in finds]
-    lines = [f"<b>✅ Ушло: {len(finds)} (за ~{round(sum(days) / len(days))} дн)</b>"]
-    for f, d in sorted(zip(finds, days, strict=True), key=lambda p: p[1]):
-        price = f"{_rub(f.price_min)} ₽" if f.price_min == f.price_max else f"{_rub(f.price_min)}–{_rub(f.price_max)} ₽"
-        link = f'<a href="{html.escape(f.url)}">{html.escape(f.title[:TITLE_CAP])}</a>'
-        lines.append(f"{link} — ушло за {d} дн · {f.vpd}/день · {price}")
-    return lines
-
-
 SECTION_EMOJI = {
     "telefony": "📱", "audio_i_video": "🎧", "tovary_dlya_kompyutera": "🖱", "noutbuki": "💻",
     "nastolnye_kompyutery": "🖥", "planshety_i_elektronnye_knigi": "📲", "orgtehnika_i_rashodniki": "🖨",
@@ -373,15 +339,12 @@ SECTION_EMOJI = {
     "tovary_dlya_zhivotnyh": "🐾", "zapchasti_i_aksessuary": "🚗",
 }  # fmt: skip
 SHORT_TITLE = 60
+SHORT_LINE_TITLE = 40  # название в строке итога
 MAX_REASONS = 3
 
 
 def section_emoji(slug: str) -> str:
     return SECTION_EMOJI.get(slug, "📦")
-
-
-def group_header(section: str, sub: str) -> str:
-    return f"<b>{section_emoji(section)} {html.escape(section_name(section).upper())} — {html.escape(sub)}</b>"
 
 
 def reason(f, vpd_hot: int = 100, min_price: int = 10000, model_count: int = 1) -> str:
@@ -459,27 +422,139 @@ class Entry(NamedTuple):
     find: object
     section: str
     sub: str
-    card: str  # без номера и заголовка группы
+    card: str  # полная карточка (для 🔥 сообщения)
+    line: str = ""  # одна строка для итога/«/top» (формат D)
 
 
-def group_entries(entries: Sequence[Entry]) -> list[list[Entry]]:
-    """По (раздел, подкатегория): внутри по vpd, группы по лучшему vpd; вся раскладка детерминирована."""
-    groups: dict[tuple[str, str], list[Entry]] = {}
+def short_title(title: str, cap: int = SHORT_LINE_TITLE) -> str:
+    return html.escape(title[:cap]) + ("…" if len(title) > cap else "")
+
+
+def format_line(f, seen: bool = False, margin: str | None = None) -> str:
+    """Строка находки в итоге (формат D): 🔥 название ×N · цена · vpd/д · ушло · уже было · 🔎 · #id."""
+    head = f"{'🔥 ' if f.hot else ''}<a href=\"{html.escape(f.url)}\">{short_title(f.title)}</a>"
+    if f.copies > 1:
+        head += f" ×{f.copies}"
+    price = f"{_rub(f.price_min)} ₽" if f.price_min == f.price_max else f"{_rub(f.price_min)}–{_rub(f.price_max)} ₽"
+    parts = [head, price, f"{f.vpd}/д"]
+    if gone := gone_days(f):
+        parts.append(f"✅ ушло за {gone} дн")
+    if seen:
+        parts.append("уже было")
+    if margin:
+        parts.append(margin)
+    if goofish := goofish_url(f.title):
+        parts.append(f'<a href="{html.escape(goofish)}">🔎</a>')
+    if (find_id := getattr(f, "id", None)) is not None:
+        parts.append(f"#{find_id}")
+    return " · ".join(parts)
+
+
+def group_sections(entries: Sequence[Entry]) -> list[tuple[str, list[Entry]]]:
+    """По разделам: внутри по vpd, разделы по лучшему vpd."""
+    by: dict[str, list[Entry]] = {}
     for e in entries:
-        groups.setdefault((e.section, e.sub), []).append(e)
-    out = [sorted(g, key=lambda e: -e.find.vpd) for g in groups.values()]
-    return sorted(out, key=lambda g: -g[0].find.vpd)
+        by.setdefault(e.section, []).append(e)
+    out = [(sec, sorted(es, key=lambda e: -e.find.vpd)) for sec, es in by.items()]
+    return sorted(out, key=lambda p: -p[1][0].find.vpd)
 
 
-def render_groups(groups: Sequence[Sequence[Entry]], numbered: bool = False) -> list[str]:
-    """Блоки для split_message: карточка = блок, заголовок группы приклеен к её первой карточке."""
-    blocks, n = [], 0
-    for g in groups:
-        for i, e in enumerate(g):
-            n += 1
-            block = f"{n}. {e.card}" if numbered else e.card
-            blocks.append(f"{group_header(e.section, e.sub)}\n{block}" if i == 0 else block)
+QUOTE_OPEN, QUOTE_CLOSE = "<blockquote expandable>", "</blockquote>"
+
+
+def quote_blocks(header: str, cont_header: str, lines: Sequence[str], limit: int = TG_LIMIT) -> list[str]:
+    """Заголовок + раскрывающаяся цитата со строками; не влезает в limit — несколько цитат с «(продолжение)»,
+    внутри тега не режем никогда."""
+    blocks: list[str] = []
+    cur: list[str] = []
+    head = header
+
+    def build() -> str:
+        return f"{head}\n{QUOTE_OPEN}{chr(10).join(cur)}{QUOTE_CLOSE}"
+
+    for line in lines:
+        cur.append(line)
+        if len(cur) > 1 and len(build()) > limit:
+            cur.pop()
+            blocks.append(build())
+            head, cur = cont_header, [line]
+    blocks.append(build())
     return blocks
+
+
+def pack_messages(blocks: Sequence[str], limit: int = TG_LIMIT) -> list[str]:
+    msgs: list[str] = []
+    cur = ""
+    for b in blocks:
+        if cur and len(cur) + 2 + len(b) > limit:
+            msgs.append(cur)
+            cur = b
+        else:
+            cur = f"{cur}\n\n{b}" if cur else b
+    if cur:
+        msgs.append(cur)
+    return msgs
+
+
+def format_model_lines(groups: Sequence[ModelGroup]) -> list[str]:
+    out = []
+    for g in groups:
+        vpd = f"{g.vpd_min}" if g.vpd_min == g.vpd_max else f"{g.vpd_min}–{g.vpd_max}"
+        parts = [f"{html.escape(g.key)} ×{g.count}", f"{vpd}/д"]
+        if g.gone:
+            parts.append(f"✅ ушло {g.gone}")
+        parts.append(f'<a href="{html.escape(g.best.url)}">лучшее</a>')
+        if gf := goofish_url(g.best.title):
+            parts.append(f'<a href="{html.escape(gf)}">🔎</a>')
+        out.append(" · ".join(parts))
+    return out
+
+
+def format_results(
+    title: str,
+    stats: str,
+    entries: Sequence[Entry],
+    models: Sequence[ModelGroup] = (),
+    notes: Sequence[str] = (),
+    tail: Sequence[str] = (),
+    limit: int = TG_LIMIT,
+) -> list[str]:
+    """Итог (формат D) для прогона и /top: шапка, раздел = заголовок + раскрывающаяся цитата, блок моделей, хвост.
+    Возвращает сообщения не длиннее limit; цитаты не режутся."""
+    head = "\n".join([title, stats, *notes, *([] if entries else ["Находок нет."])])
+    blocks = [head]
+    for sec, es in group_sections(entries):
+        name = f"{section_emoji(sec)} {html.escape(section_name(sec))}"
+        lines = [e.line for e in es]
+        blocks += quote_blocks(f"<b>{name} — {len(es)}</b>", f"<b>{name} (продолжение)</b>", lines, limit)
+    if models:
+        blocks += quote_blocks(
+            f"<b>🔁 Модели с несколькими объявлениями — {len(models)}</b>",
+            "<b>🔁 Модели (продолжение)</b>",
+            format_model_lines(models),
+            limit,
+        )
+    if tail:
+        blocks.append("\n".join(tail))
+    return pack_messages(blocks, limit)
+
+
+def summary_tail(
+    covered: Sequence[tuple[str, float]], errors: Sequence[str], remaining: int, max_age_days: int
+) -> list[str]:
+    """Хвост итога: покрытие, ошибки, сколько осталось (коротко, одним блоком)."""
+    tail = []
+    if covered:
+        tail.append(
+            "Покрыто не полностью: "
+            + ", ".join(f"{html.escape(n)} — {round(d, 1):g} из {max_age_days} дн" for n, d in covered)
+        )
+    tail += [f"ошибка: {html.escape(e[:200])}" for e in errors[:MAX_ERRORS]]
+    if len(errors) > MAX_ERRORS:
+        tail.append(f"и ещё {len(errors) - MAX_ERRORS}")
+    if remaining:
+        tail.append(f"Осталось {remaining} подкатегорий, пойдут первыми в следующий раз.")
+    return tail
 
 
 FINAL_HEADERS = {
@@ -531,36 +606,6 @@ def format_progress(
     details.append(f"🎯 {finds} находок · 🔥 {hot} · 📂 {subcats} подкатегорий")
     body = "\n".join(details)
     return f"<b>{head}</b>\n<code>{progress_bar(loads, budget)} {pct}%</code>\n<blockquote>{body}</blockquote>"
-
-
-def format_summary(
-    day: datetime,
-    find_lines: Sequence[str],
-    covered: Sequence[tuple[str, float]] = (),
-    errors: Sequence[str] = (),
-    remaining: int = 0,
-    max_age_days: int = 7,
-    note: str | None = None,
-    totals: str | None = None,
-    models: Sequence[str] = (),
-    gone: Sequence[str] = (),
-) -> str:
-    """Итог прогона. find_lines — блоки (карточки), разделяются пустой строкой, чтобы split_message не резал карточку.
-    covered: (подкатегория, дней покрыто) только там, где неделя не вошла в лимит страниц."""
-    head = [f"<b>Итог проверки — {day:%d.%m}</b>", *([note] if note else []), *([totals] if totals else [])]
-    tail = []
-    if covered:
-        tail.append(
-            "Покрыто не полностью: "
-            + ", ".join(f"{html.escape(n)} — {round(d, 1):g} из {max_age_days} дн" for n, d in covered)
-        )
-    tail += [f"ошибка: {html.escape(e[:200])}" for e in errors[:MAX_ERRORS]]
-    if len(errors) > MAX_ERRORS:
-        tail.append(f"и ещё {len(errors) - MAX_ERRORS}")
-    if remaining:
-        tail.append(f"Осталось {remaining} подкатегорий, пойдут первыми в следующий раз.")
-    blocks = ["\n".join(head), *(find_lines or ["Находок нет."]), "\n".join(models), "\n".join(gone), "\n".join(tail)]
-    return "\n\n".join(b for b in blocks if b)
 
 
 def _cut_at(line: str, limit: int) -> int:

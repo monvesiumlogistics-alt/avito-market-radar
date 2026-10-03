@@ -487,7 +487,10 @@ def runs(t) -> list[CrawlRun]:
 
 
 def summary_text(t) -> str:
-    return [x for x in t.notifier.sent if "Итог проверки" in x][-1]
+    """Итог (формат D) может состоять из нескольких сообщений: от шапки до конца."""
+    sent = t.notifier.sent
+    start = max(i for i, x in enumerate(sent) if "📊 Проверка рынка" in x)
+    return "\n\n".join(sent[start:])
 
 
 def search_calls(t, sec_n: str) -> int:
@@ -511,7 +514,7 @@ async def test_start_new(tmp_path):
     (run,) = runs(t)
     assert run.status == "done" and run.finished_at and run.finds_count == 1
     assert run.loads == t.crawler.loads == 4  # warm-up + выдача (2 стр.) + карточка
-    assert t.notifier.sent[0].startswith("<b>⏳ Проверка рынка") and "Итог проверки" in summary_text(t)
+    assert t.notifier.sent[0].startswith("<b>⏳ Проверка рынка") and "📊 Проверка рынка" in summary_text(t)
     assert not t.crawler.running
 
 
@@ -582,34 +585,50 @@ async def test_progress_once_per_minute(tmp_path):
     assert last.startswith("<b>✅ Проверка завершена</b>") and "⏱ 01:01 прошло" in last
 
 
-async def test_portion_after_section_and_final_sorted(tmp_path):
-    t = life(tmp_path, {"A": [600, 900], "B": [450]})  # vpd 200, 300 / 150
+async def test_hot_sent_immediately_non_hot_only_in_summary(tmp_path):
+    t = life(tmp_path, {"A": [900, 150], "B": [450]})  # vpd 300 🔥, 50, 150 🔥
     t.crawler.start()
     await t.crawler._task
     ev = t.provider.events
-    portion_a = next(i for i, e in enumerate(ev) if e[0] == "send" and "A — находки" in e[1])
-    first_b = next(i for i, e in enumerate(ev) if e[0] == "fetch" and "/B/" in e[1])
-    assert portion_a < first_b  # порция сразу после раздела A, до начала B
-    text = next(e[1] for e in ev if e[0] == "send" and "A — находки" in e[1])
-    assert text.index("Item A 2") < text.index("Item A 1")  # по vpd
-    final = summary_text(t)  # находки уже ушли порциями: в итоге только счётчики, без повторов (ADR-007)
-    assert "Всего: найдено 3, 🔥 3, подкатегорий 3, загрузок" in final and "Item" not in final
-    assert "остальные отправлены выше" in final
-    assert sum(1 for x in t.notifier.sent if "Item A 2" in x) == 1
+    sends = [e[1] for e in ev if e[0] == "send"]
+    cards = [x for x in sends if "💡" in x]
+    assert len(cards) == 2 and "Item A 1" in cards[0] and "Item B 1" in cards[1]  # только 🔥, формат карточки
+    assert not any("— находки" in x for x in sends)  # порций по разделам больше нет
+    card_a = next(i for i, e in enumerate(ev) if e[0] == "send" and "💡" in e[1] and "Item A 1" in e[1])
+    next_fetch = next(i for i, e in enumerate(ev) if e[0] == "fetch" and "/A/c2-H" in e[1])
+    assert card_a < next_fetch  # 🔥 ушла сразу после подкатегории, до следующей
+    buttons = [m for m in t.notifier.markups if m is not None]
+    assert len(buttons) == 2 and all(len(m.inline_keyboard) == 1 for m in buttons)
     with t.sf() as db:
-        assert all(f.sent for f in db.scalars(select(Find)))
+        ids = {f.title: f.id for f in db.scalars(select(Find))}
+    a1 = ids["Item A 1"]
+    assert [b.callback_data for b in buttons[0].inline_keyboard[0]] == [f"fb:{a1}:1", f"fb:{a1}:-1"]
+    summary = summary_text(t)
+    assert all(f"Item {x}" in summary for x in ("A 1", "A 2", "B 1"))  # в итоге все находки, 🔥 тоже
+    lines = {
+        x: next(ln for ln in summary.split("\n") if f"Item {x}" in ln).replace("<blockquote expandable>", "")
+        for x in ("A 1", "A 2", "B 1")
+    }
+    assert lines["A 1"].startswith("🔥 ") and lines["B 1"].startswith("🔥 ") and not lines["A 2"].startswith("🔥")
+    assert "<b>📦 A — 2</b>" in summary and "<b>📦 B — 1</b>" in summary
+    assert summary.index("Item A 1") < summary.index("Item A 2")  # внутри раздела по vpd
+    assert "🎯 3 находок · 🔥 2 · 📂 3 подкатегорий" in summary
+    with t.sf() as db:
+        sent = {f.title: f.sent for f in db.scalars(select(Find))}
+    assert sent == {"Item A 1": True, "Item A 2": False, "Item B 1": True}
 
 
-async def test_failed_telegram_portion_stays_unsent_but_in_summary(tmp_path):
+async def test_failed_hot_send_stays_unsent_but_in_summary(tmp_path):
     t = life(tmp_path, {"A": [900]})
     t.notifier.fail = True
     t.crawler.start()
     await t.crawler._task
-    assert runs(t)[0].status == "done" and not rows(t)[0].sent
-    assert any(e[0] == "send" and "Item A 1" in e[1] for e in t.provider.events)
+    assert runs(t)[0].status == "done" and not rows(t)[0].sent  # карточка не ушла: sent=False
+    summary = [e[1] for e in t.provider.events if e[0] == "send" and "📊 Проверка рынка" in e[1]]
+    assert summary and "Item A 1" in summary[0]  # но в итоге она есть
 
 
-async def test_already_seen_from_db_marks_date(tmp_path):
+async def test_already_seen_from_db_marks_it_in_summary(tmp_path):
     t = life(tmp_path, {"A": [900, 450]})  # c1: vpd 300, c2: vpd 150
     with t.sf() as db:
         old = CrawlRun(started_at=datetime(2026, 9, 20), status="done")
@@ -626,10 +645,11 @@ async def test_already_seen_from_db_marks_date(tmp_path):
         db.commit()
     t.crawler.start()
     await t.crawler._task
-    lines = next(x for x in t.notifier.sent if "A — находки" in x).split("\n")
-    i_new, i_seen = (next(i for i, ln in enumerate(lines) if f"Item A {n}" in ln) for n in (2, 1))
-    assert "уже было 20.09" in lines[i_seen + 1] and "уже было" not in lines[i_new + 1]  # дата — во 2-й строке карточки
-    assert i_seen < i_new  # группы по лучшему vpd: A 1 (300) раньше A 2 (150)
+    lines = summary_text(t).split("\n")
+    seen, new = (next(ln for ln in lines if f"Item A {n}" in ln) for n in (1, 2))
+    assert "уже было" in seen and "уже было" not in new
+    card = next(x for x in t.notifier.sent if "💡" in x and "Item A 1" in x)
+    assert card.count("уже было 20.09") == 1  # и в карточке с датой
 
 
 def test_mark_interrupted(tmp_path):
@@ -809,7 +829,7 @@ async def test_breaker_three_errors_failed_one_summary(tmp_path):
     await t.crawler._task
     assert runs(t)[0].status == "failed" and len(t.crawler.errors) == 3
     assert search_calls(t, "c4") == 0
-    assert sum("Итог проверки" in x for x in t.notifier.sent) == 1 and "упала" in summary_text(t)
+    assert sum("📊 Проверка рынка" in x for x in t.notifier.sent) == 1 and "упала" in summary_text(t)
     with t.sf() as db:
         cats = db.scalars(select(Category).order_by(Category.id)).all()
         assert [c.last_status for c in cats] == ["error"] * 3 + [None] and all(c.last_crawled_at is None for c in cats)

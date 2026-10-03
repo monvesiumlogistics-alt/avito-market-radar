@@ -71,7 +71,7 @@ def test_top_dedupe_days_sorted_limit(tmp_path):
         assert [f.vpd for f in res] == sorted((f.vpd for f in res), reverse=True)
         assert sum(f.group_key == "roland" for f in res) == 1 and all(f.title != "Old Yamaha" for f in res)
         assert len(top_finds(db, 30, NOW)) == 15 and top_finds(db, 30, NOW)[0].title == "Old Yamaha"
-        assert top_messages(db, 7, NOW)[0].startswith("<b>Топ находок за 7 дн</b>")
+        assert top_messages(db, 7, NOW)[0].startswith("<b>📊 Топ находок · 7 дн</b>")
 
 
 def test_top_empty(tmp_path):
@@ -84,9 +84,9 @@ async def test_top_handler_days_arg(tmp_path):
     add_find(sf, "Pioneer DDJ-400", 120, days_ago=0)
     t = make(sf)
     await send(t, "/top 3")
-    assert "Топ находок за 3 дн" in t.session.requests[-1].text and "Pioneer DDJ-400" in t.session.requests[-1].text
+    assert "Топ находок · 3 дн" in t.session.requests[-1].text and "Pioneer DDJ-400" in t.session.requests[-1].text
     await send(t, "/top abc")
-    assert "за 7 дн" in t.session.requests[-1].text
+    assert "Топ находок · 7 дн" in t.session.requests[-1].text
 
 
 # --- F3 /export ---
@@ -227,28 +227,6 @@ def test_feedback_changes_crawl_order():
     assert feedback_factor(100) == 2.5 and feedback_factor(-100) == 0.25 and feedback_factor(0) == 1
 
 
-async def test_portion_has_feedback_keyboard_up_to_8_finds(tmp_path):
-    t = life(tmp_path, {"A": [900, 450]})
-    t.crawler.start()
-    await t.crawler._task
-    markup = next(m for m in t.notifier.markups if m is not None)
-    rows_ = markup.inline_keyboard
-    assert len(rows_) == 2 and [b.text for b in rows_[0]] == ["👍 1", "👎 1"]
-    with t.sf() as db:
-        ids = {f.id for f in db.scalars(select(Find))}
-    assert {int(b.callback_data.split(":")[1]) for r in rows_ for b in r} == ids
-    portion = next(x for x in t.notifier.sent if "A — находки" in x)
-    assert "\n1. " in portion and "\n2. " in portion
-    assert t.notifier.markups[-1] is None  # итог без кнопок
-
-
-async def test_portion_without_keyboard_over_8_finds(tmp_path):
-    t = life(tmp_path, {"A": [900] * 9})
-    t.crawler.start()
-    await t.crawler._task
-    assert all(m is None for m in t.notifier.markups)
-
-
 # --- G2/G3 в командах ---
 
 
@@ -271,7 +249,7 @@ def test_top_has_models_block_and_margin(tmp_path):
         db.commit()
         text = "\n".join(top_messages(db, 7, NOW))
     assert "🔁 Модели с несколькими объявлениями" in text and "aimiko u2 ×4" in text
-    assert "💱 себест. ~" in text and "¥2300×12.2" in text and "доставка 3 кг" in text  # «Аккордеоны»: вес по умолчанию
+    assert "💱 ~" in text and "%)" in text  # маржа в строке: цена Китая известна
 
 
 async def test_price_handler(tmp_path):
