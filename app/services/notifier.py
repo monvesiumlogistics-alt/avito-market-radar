@@ -4,11 +4,13 @@ from datetime import time
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 
 from app.db import ListingRow
 
 log = logging.getLogger(__name__)
+
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 
 def format_price(price: int | None) -> str:
@@ -47,7 +49,7 @@ class TelegramNotifier:
             except Exception as e:  # Telegram не смог скачать фото с CDN и т.п. -> шлём текстом
                 log.warning("[NOTIFY] фото не ушло (%s), шлю текстом", e)
         try:
-            await self.bot.send_message(self.chat_id, text, reply_markup=kb, disable_web_page_preview=True)
+            await self.bot.send_message(self.chat_id, text, reply_markup=kb, link_preview_options=NO_PREVIEW)
             log.info("[NOTIFY] telegram success avito_id=%s", row.external_id)
             return True
         except Exception:
@@ -57,7 +59,7 @@ class TelegramNotifier:
     async def send_text(self, text: str) -> int | None:
         """Одно сообщение (не режет длинный текст — это делает вызывающий). Возвращает id или None при ошибке."""
         try:
-            msg = await self.bot.send_message(self.chat_id, text, disable_web_page_preview=True)
+            msg = await self.bot.send_message(self.chat_id, text, link_preview_options=NO_PREVIEW)
             return msg.message_id
         except Exception:
             log.exception("[NOTIFY] не удалось отправить служебное сообщение")
@@ -66,7 +68,7 @@ class TelegramNotifier:
     async def edit_text(self, message_id: int, text: str) -> None:
         try:
             await self.bot.edit_message_text(
-                text, chat_id=self.chat_id, message_id=message_id, disable_web_page_preview=True
+                text, chat_id=self.chat_id, message_id=message_id, link_preview_options=NO_PREVIEW
             )
         except TelegramBadRequest as e:
             if "message is not modified" not in str(e):

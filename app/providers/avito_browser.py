@@ -14,6 +14,7 @@ from app.providers.base import AvitoProvider, Page, ProviderBlocked
 
 log = logging.getLogger(__name__)
 
+PROBE_TIMEOUT = 15  # с на tab.content()/title() при ожидании капчи
 BLOCK_STATUSES = {403, 429, 439}  # 439 — капча «проверка безопасности», 429 — «проблема с IP» (ADR-004)
 
 
@@ -96,18 +97,25 @@ class AvitoBrowserProvider(AvitoProvider):
         """ADR-005: человек проходит проверку в видимом окне, бот её не решает и не обходит.
 
         Открываем заблокированный url в отдельной вкладке и опрашиваем её, пока страница не перестанет быть блоком.
+        Срок — по настоящим часам (loop.time), зависший content()/title() ограничен PROBE_TIMEOUT (ADR-007).
         """
         assert self._ctx, "use `async with provider:`"
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
         tab = await self._ctx.new_page()
         try:
             with contextlib.suppress(Exception):
                 await tab.goto(url, wait_until="domcontentloaded", timeout=45_000)
-            for _ in range(int(timeout_s // poll_s)):
-                await asyncio.sleep(poll_s)
+            while loop.time() < deadline:
+                if cancel and cancel():
+                    return False
+                await asyncio.sleep(max(min(poll_s, deadline - loop.time()), 0))
                 if cancel and cancel():
                     return False
                 with contextlib.suppress(Exception):
-                    if not is_blocked(await tab.content(), await tab.title()):
+                    html = await asyncio.wait_for(tab.content(), PROBE_TIMEOUT)
+                    title = await asyncio.wait_for(tab.title(), PROBE_TIMEOUT)
+                    if not is_blocked(html, title):
                         return True
             return False
         finally:

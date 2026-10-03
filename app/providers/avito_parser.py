@@ -8,12 +8,19 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup, Tag
 
 from app.models import Listing
 
 BASE_URL = "https://www.avito.ru"
+MSK = ZoneInfo("Europe/Moscow")  # даты Avito относительные и московские (как timezone_id браузера)
+
+
+def msk_now() -> datetime:
+    """Наивное «сейчас» по Москве: в БД и в разборе дат время везде наивное, но одно и то же (ADR-007)."""
+    return datetime.now(MSK).replace(tzinfo=None)
 
 SELECTORS: dict[str, list[str]] = {
     "card": ['[data-marker="item"]'],
@@ -41,11 +48,23 @@ TEXT_PATTERNS = {
     "today": re.compile(r"\+\s*(\d[\d\s]*)\s*сегодня"),
 }
 
-BLOCK_MARKERS = ("Доступ ограничен", 'class="firewall-container', "firewall-title", "Вы робот")
+FIREWALL_MARKERS = ('class="firewall-container', "firewall-title")  # вёрстка страницы блока: ищем во всём HTML
+BLOCK_TEXTS = ("Доступ ограничен", "Вы робот")  # слова: только в заголовке и начале видимого текста (ADR-007)
+BLOCK_TEXT_HEAD = 3000
 
 
 def is_blocked(html: str, title: str = "") -> bool:
-    return "Доступ ограничен" in title or any(m in html for m in BLOCK_MARKERS)
+    """Страница блока/капчи. Слова из BLOCK_TEXTS ищем лишь в title и первых 3000 символах видимого текста:
+    описание объявления с «Вы робот» не должно останавливать обход."""
+    if any(m in title for m in BLOCK_TEXTS) or any(m in html for m in FIREWALL_MARKERS):
+        return True
+    if not any(m in html for m in BLOCK_TEXTS):
+        return False
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    head = soup.get_text(" ", strip=True)[:BLOCK_TEXT_HEAD]
+    return any(m in head for m in BLOCK_TEXTS)
 
 
 def parse_price(text: str | None) -> int | None:
@@ -60,6 +79,12 @@ def parse_price(text: str | None) -> int | None:
 def normalize_url(href: str, base: str = BASE_URL) -> str:
     parts = urlsplit(urljoin(base, href))
     return urlunsplit(("https", parts.netloc.lower(), parts.path.rstrip("/"), "", ""))
+
+
+def is_avito_url(url: str) -> bool:
+    """Только avito.ru и его поддомены: чужие ссылки не храним, не показываем и не открываем (ADR-007)."""
+    host = (urlsplit(url).hostname or "").lower()
+    return host == "avito.ru" or host.endswith(".avito.ru")
 
 
 def extract_id(data_item_id: str | None, url: str) -> str:
@@ -110,7 +135,7 @@ def parse_published(text: str | None, now: datetime | None = None, absolute_time
     """
     if not text:
         return None
-    now = now or datetime.now()
+    now = now or msk_now()
     t = text.lower().strip()
     if "только что" in t or "секунд" in t:
         return now
@@ -129,19 +154,16 @@ def parse_published(text: str | None, now: datetime | None = None, absolute_time
         return day.replace(hour=int(m.group(2)), minute=int(m.group(3)), second=0, microsecond=0)
     m = re.search(r"(\d{1,2})\s+([а-я]+)(?:\s+(\d{4}))?(?:\s+(?:в\s+)?(\d{1,2}):(\d{2}))?", t)
     if m and m.group(2) in _MONTHS and (absolute_time or not m.group(4)):
-        try:
-            d = datetime(
-                int(m.group(3) or now.year),
-                _MONTHS[m.group(2)],
-                int(m.group(1)),
-                int(m.group(4) or 0),
-                int(m.group(5) or 0),
-            )
-            if d > now and not m.group(3):
-                d = d.replace(year=d.year - 1)  # «25 декабря» в январе — прошлый год
-        except ValueError:
-            return None
-        return d
+        md = (_MONTHS[m.group(2)], int(m.group(1)), int(m.group(4) or 0), int(m.group(5) or 0))
+        # без года — ближайшая такая дата не позже now («25 декабря» в январе — прошлый год; 29 февраля — високосный)
+        for year in [int(m.group(3))] if m.group(3) else range(now.year, now.year - 9, -1):
+            try:
+                d = datetime(year, *md)
+            except ValueError:
+                continue
+            if d <= now or m.group(3):
+                return d
+        return None
     m = re.fullmatch(r"(сегодня|вчера)", t)  # поиск показывает только день, без времени
     if m:
         return now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=m.group(1) == "вчера")
@@ -192,6 +214,8 @@ def parse_search_html(html: str, label: str = "", now: datetime | None = None) -
         if link is None or not link.get("href") or not title:
             continue
         url = normalize_url(link["href"])
+        if not is_avito_url(url):
+            continue
         listings.append(
             Listing(
                 external_id=extract_id(card.get("data-item-id"), url),
@@ -229,11 +253,12 @@ def parse_item_page(html: str) -> ItemStats:
     today = _value(_first(soup, "item_today"))
     date = _value(_first(soup, "item_date"))
     link = _first(soup, "item_seller_link")
+    seller_url = normalize_url(link["href"]) if link is not None and link.get("href") else None
     return ItemStats(
         views=_digits("views", views) if views else None,
         today=_digits("today", today) if today else None,
         date_text=date.lstrip("· ").strip() or None if date else None,
-        seller_url=normalize_url(link["href"]) if link is not None and link.get("href") else None,
+        seller_url=seller_url if seller_url and is_avito_url(seller_url) else None,
     )
 
 
@@ -267,8 +292,8 @@ def parse_subcategories(html: str, section: str, limit: int) -> list[tuple[str, 
     for a in soup.select(SELECTORS["subcat"][0]):
         parts = [p for p in urlsplit(a.get("href", "")).path.split("/") if p]
         name = a.get_text(" ", strip=True)
-        if len(parts) == 3 and parts[1] == section and name:
-            seen.setdefault(normalize_url(a["href"]), name)
+        if len(parts) == 3 and parts[1] == section and name and is_avito_url(url := normalize_url(a["href"])):
+            seen.setdefault(url, name)
     if not seen:
         for a in soup.find_all("a", href=True):
             parts = [p for p in urlsplit(a["href"]).path.split("/") if p]
@@ -280,6 +305,7 @@ def parse_subcategories(html: str, section: str, limit: int) -> list[tuple[str, 
                 and not re.search(r"_\d{7,}$", parts[2])
                 and name
                 and len(name) < 40
+                and is_avito_url(normalize_url(a["href"]))
             ):
                 seen.setdefault(normalize_url(f"/rossiya/{section}/{parts[2]}"), name)
     return [(name, url) for url, name in list(seen.items())[:limit]]

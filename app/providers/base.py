@@ -10,6 +10,10 @@ class ProviderBlocked(Exception):
     """Площадка показала блок/капчу. Это не «0 объявлений»: нужен человек."""
 
 
+class BrowserLost(Exception):
+    """Браузер недоступен (не переоткрылся после уступки, закрыт): дальше по этой подкатегории идти нельзя."""
+
+
 @dataclass(frozen=True)
 class Page:
     html: str
@@ -25,7 +29,7 @@ class BrowserGate:
         self._waiters = 0
 
     @property
-    def locked(self) -> bool:
+    def locked(self) -> bool:  # используется в тестах
         return self._lock.locked()
 
     @property

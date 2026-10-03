@@ -334,8 +334,8 @@ async def test_fetch_timeout_counted_as_error(tmp_path):
             return await super().fetch(url, ready_selector)
 
     t.crawler.provider = Slow(pages)
-    assert await t.crawler.crawl_subcategory(t.cat_id) is True
-    assert rows(t) == [] and len(t.crawler.errors) == 1 and "TimeoutError" in t.crawler.errors[0]
+    assert await t.crawler.crawl_subcategory(t.cat_id) is False  # все открытые карточки упали = ошибка (ADR-007)
+    assert rows(t) == [] and len(t.crawler.errors) == 2 and "TimeoutError" in t.crawler.errors[0]
 
 
 async def test_interrupted_subcat_no_duplicates_and_loads_kept(tmp_path):
@@ -588,9 +588,10 @@ async def test_portion_after_section_and_final_sorted(tmp_path):
     assert portion_a < first_b  # порция сразу после раздела A, до начала B
     text = next(e[1] for e in ev if e[0] == "send" and "A — находки" in e[1])
     assert text.index("Item A 2") < text.index("Item A 1")  # по vpd
-    final = summary_text(t).split("\n")
-    order = [next(i for i, ln in enumerate(final) if f"Item {x}" in ln) for x in ("A 2", "A 1", "B 1")]
-    assert order == sorted(order)
+    final = summary_text(t)  # находки уже ушли порциями: в итоге только счётчики, без повторов (ADR-007)
+    assert "Всего: найдено 3, 🔥 3, подкатегорий 3, загрузок" in final and "Item" not in final
+    assert "остальные отправлены выше" in final
+    assert sum(1 for x in t.notifier.sent if "Item A 2" in x) == 1
     with t.sf() as db:
         assert all(f.sent for f in db.scalars(select(Find)))
 
@@ -621,7 +622,7 @@ async def test_already_seen_from_db_marks_date(tmp_path):
         db.commit()
     t.crawler.start()
     await t.crawler._task
-    lines = summary_text(t).split("\n")
+    lines = next(x for x in t.notifier.sent if "A — находки" in x).split("\n")
     i_new, i_seen = (next(i for i, ln in enumerate(lines) if f"Item A {n}" in ln) for n in (2, 1))
     assert i_new < i_seen and "уже было 20.09" in lines[i_seen] and "уже было" not in lines[i_new]
 

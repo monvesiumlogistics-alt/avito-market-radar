@@ -8,3 +8,4 @@ beautifulsoup4>=4.15
 pytest>=9
 pytest-asyncio>=1.4
 ruff>=0.16
+tzdata>=2024.1; sys_platform == "win32"

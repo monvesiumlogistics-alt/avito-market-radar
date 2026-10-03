@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import html
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from app.models import Listing
 from app.providers.avito_parser import (
     BASE_URL,
     SELECTORS,
+    msk_now,
     parse_item_page,
     parse_published,
     parse_search_html,
@@ -25,7 +27,7 @@ from app.providers.avito_parser import (
     promoted_ids,
     with_page,
 )
-from app.providers.base import AvitoProvider, ProviderBlocked
+from app.providers.base import AvitoProvider, BrowserLost, ProviderBlocked
 from app.services.market_logic import (
     age_days,
     calc_vpd,
@@ -39,7 +41,8 @@ from app.services.market_logic import (
     is_find,
     is_hot,
     norm_title,
-    pick_cards,
+    pick_groups,
+    section_name,
     sort_finds,
     split_message,
 )
@@ -98,7 +101,7 @@ class MarketCrawler:
         notifier: MarketNotifier,
         settings: Settings,
         gate=None,  # BrowserGate | None; используется с I10/I11
-        clock: Callable[[], datetime] = datetime.now,
+        clock: Callable[[], datetime] = msk_now,
     ):
         self.session_factory = session_factory
         self.provider_factory = provider_factory
@@ -111,7 +114,8 @@ class MarketCrawler:
         # состояние текущего прогона
         self.provider: AvitoProvider | None = None
         self.run_id: int | None = None
-        self.loads = 0
+        self.loads = 0  # загрузок с последнего /report: бюджет считается заново на каждом нажатии (ADR-007)
+        self._loads_saved = 0  # сколько из них уже добавлено в run.loads (накопительная статистика)
         self.errors: list[str] = []
         self.send_delay = 1.0  # пауза между кусками длинного сообщения (лимиты Telegram); в тестах 0
         self.captcha_poll = 5.0  # с между проверками, прошёл ли человек капчу
@@ -120,6 +124,7 @@ class MarketCrawler:
         self._owns_gate = False
         self._progress_at: datetime | None = None
         self._progress_id: int | None = None
+        self._progress_tried = False
 
     # --- жизненный цикл ---
 
@@ -149,9 +154,10 @@ class MarketCrawler:
                 db.add(run)
                 reply = "Начинаю проверку рынка"
             db.commit()
-            self.run_id, self.loads = run.id, run.loads
+            self.run_id, self.loads, self._loads_saved = run.id, 0, 0
         self.stop_requested, self.errors = False, []
-        self._progress_at = self._progress_id = None  # на продолжении новое сообщение о прогрессе (m6)
+        self._progress_at = self._progress_id = None
+        self._progress_tried = False  # на продолжении новое сообщение о прогрессе (m6)
         self._task = asyncio.create_task(self._run())
         return reply
 
@@ -203,7 +209,10 @@ class MarketCrawler:
             if self._owns_gate:
                 self.gate.release()
                 self._owns_gate = False
-            self._finish(status)
+            try:
+                self._finish(status)
+            except Exception:  # БД занята: итог всё равно отправим, статус поправит mark_interrupted при старте
+                log.exception("[MARKET] статус прогона не записан")
         try:
             await self._summary(status)
         except Exception:
@@ -213,8 +222,14 @@ class MarketCrawler:
         """Статус и run.loads пишутся на любом выходе, в том числе при отмене (N7)."""
         with self.session_factory() as db:
             run = db.get(CrawlRun, self.run_id)
-            run.status, run.finished_at, run.loads = status, self.clock(), self.loads
+            run.status, run.finished_at = status, self.clock()
+            self._add_loads(run)
             db.commit()
+
+    def _add_loads(self, run: CrawlRun) -> None:
+        """run.loads копит загрузки всех нажатий /report, self.loads — только текущего."""
+        run.loads += self.loads - self._loads_saved
+        self._loads_saved = self.loads
 
     async def _crawl_all(self) -> None:
         with self.session_factory() as db:
@@ -258,10 +273,14 @@ class MarketCrawler:
         self._progress_at = now
         text = self._progress_text()
         if self._progress_id is None:
+            if self._progress_tried:  # первая отправка не удалась: не повторяем каждую минуту
+                return
+            self._progress_tried = True
             self._progress_id = await self.notifier.send_text(text)
-            with self.session_factory() as db:
-                db.get(CrawlRun, self.run_id).progress_msg_id = self._progress_id
-                db.commit()
+            if self._progress_id is not None:
+                with self.session_factory() as db:
+                    db.get(CrawlRun, self.run_id).progress_msg_id = self._progress_id
+                    db.commit()
         else:
             await self.notifier.edit_text(self._progress_id, text)
 
@@ -275,18 +294,18 @@ class MarketCrawler:
 
     def _lines(self, db, finds: list[Find]) -> list[str]:
         """Строки находок: 🔥 первыми, «уже было» (находка в другом прогоне той же подкатегории) после новых."""
+        if not finds:
+            return []
+        keys, cat_ids = {f.group_key for f in finds}, {f.category_id for f in finds}
         seen: dict[str, datetime] = {}
-        for f in finds:
-            first = db.scalar(
-                select(func.min(Find.created_at)).where(
-                    Find.group_key == f.group_key, Find.category_id == f.category_id, Find.run_id != f.run_id
-                )
-            )
-            if first:
-                seen[f.group_key] = first
-        return [
-            format_find(f, db.get(Category, f.category_id).name, seen.get(f.group_key)) for f in sort_finds(finds, seen)
-        ]
+        for key, first in db.execute(  # один запрос на все находки, без N+1
+            select(Find.group_key, func.min(Find.created_at))
+            .where(Find.group_key.in_(keys), Find.category_id.in_(cat_ids), Find.run_id != self.run_id)
+            .group_by(Find.group_key, Find.category_id)
+        ):
+            seen[key] = min(first, seen.get(key, first))
+        names = dict(db.execute(select(Category.id, Category.name).where(Category.id.in_(cat_ids))).all())
+        return [format_find(f, names[f.category_id], seen.get(f.group_key)) for f in sort_finds(finds, seen)]
 
     async def _portion(self, section: str) -> None:
         """Находки только что пройденного раздела (AC-4.2)."""
@@ -300,7 +319,7 @@ class MarketCrawler:
             )
             if not finds:
                 return
-            text = "\n".join([f"<b>{section.replace('_', ' ')} — находки</b>", *self._lines(db, finds)])
+            text = "\n".join([f"<b>{html.escape(section_name(section))} — находки</b>", *self._lines(db, finds)])
             ids = [f.id for f in finds]
         if await self._send(text):  # Telegram не принял — sent=0, находки всё равно попадут в итог
             self._mark_sent(ids)
@@ -311,9 +330,11 @@ class MarketCrawler:
             db.commit()
 
     async def _summary(self, status: str) -> None:
+        """Итог: счётчики + только ещё не отправленные находки (остальные ушли порциями, ADR-007)."""
         s = self.settings
         with self.session_factory() as db:
             finds = list(db.scalars(select(Find).where(Find.run_id == self.run_id)))
+            unsent = [f for f in finds if not f.sent]
             cats = self._categories(db)
             done = [c for c in cats if c.last_run_id == self.run_id]
             covered = [
@@ -323,17 +344,24 @@ class MarketCrawler:
                 if c.last_days_covered < s.report_max_age_days
             ]
             remaining = len(cats) - len(done)
+            loads = db.get(CrawlRun, self.run_id).loads + self.loads - self._loads_saved
+            totals = (
+                f"Всего: найдено {len(finds)}, 🔥 {sum(f.hot for f in finds)}, "
+                f"подкатегорий {len(done)}, загрузок {loads}"
+            )
+            lines = self._lines(db, unsent) or (["Новых находок нет, остальные отправлены выше."] if finds else [])
             text = format_summary(
                 self.clock(),
-                self._lines(db, finds),
+                lines,
                 covered,
                 self.errors,
                 remaining if status != "done" else 0,
                 s.report_max_age_days,
                 STATUS_NOTES.get(status),
+                totals,
             )
-            ids = [f.id for f in finds]
-        if await self._send(text):
+            ids = [f.id for f in unsent]
+        if await self._send(text) and ids:
             self._mark_sent(ids)
 
     # --- загрузки ---
@@ -374,7 +402,10 @@ class MarketCrawler:
         self._owns_gate = False
         await self.gate.acquire()
         self._owns_gate = True
-        self.provider = await self._open_provider()
+        try:
+            self.provider = await self._open_provider()
+        except Exception as e:  # браузера нет: карточки не должны «успешно» пройти пустыми (ADR-007)
+            raise BrowserLost(f"{type(e).__name__}: {e}") from e
         self.loads += 1
 
     async def _fetch(self, url: str, ready_selector: str | None = None):
@@ -388,6 +419,8 @@ class MarketCrawler:
             return await self._timed_fetch(url, ready_selector)
 
     async def _timed_fetch(self, url: str, ready_selector: str | None):
+        if self.provider is None:
+            raise BrowserLost("браузер закрыт")
         async with asyncio.timeout(self.fetch_timeout):
             return await self.provider.fetch(url, ready_selector)
 
@@ -421,7 +454,7 @@ class MarketCrawler:
             try:
                 res = await self._fetch(f"{BASE_URL}/rossiya/{section}", SELECTORS["subcat"][0])
                 subs = parse_subcategories(res.html, section, s.report_max_subcats)
-            except (StopRequested, BudgetExhausted, ProviderBlocked):
+            except (StopRequested, BudgetExhausted, ProviderBlocked, BrowserLost):
                 raise
             except Exception as e:
                 log.exception("[MARKET] раздел %s: не удалось прочитать подкатегории", section)
@@ -435,8 +468,7 @@ class MarketCrawler:
                     cat = by_url.get(url) or Category(section=section, url=url)
                     cat.name, cat.discovered_at = name, now
                     db.add(cat)
-                run = db.get(CrawlRun, self.run_id)
-                run.loads = self.loads
+                self._add_loads(db.get(CrawlRun, self.run_id))
                 db.commit()
 
     # --- подкатегория ---
@@ -499,7 +531,8 @@ class MarketCrawler:
         s, now = self.settings, self.clock()
         finds: list[Find] = []
         opened_pages = 0
-        for group in pick_cards(group_cards(cards)):
+        card_errors = 0
+        for group, full in pick_groups(group_cards(cards)):
             opened: list[Opened] = []
             dropped = False
             for card in group:
@@ -507,6 +540,9 @@ class MarketCrawler:
                     break
                 opened_pages += 1
                 res = await self._open_card(card)
+                if res == "error":
+                    card_errors += 1
+                    continue
                 if res == "old":  # дата на странице старше недели: группа отброшена, профиль не смотрим (AC-3.5)
                     dropped = True
                     break
@@ -526,7 +562,7 @@ class MarketCrawler:
                 vpd = calc_vpd(best.views, age)
             if not is_find(vpd, best.card.price, age, s):
                 continue
-            prices = [c.price for c in group]
+            prices = [c.price for c in full]  # диапазон цен и копии — по всей группе, не по открытым (ADR-007)
             finds.append(
                 Find(
                     category_id=cat_id,
@@ -541,17 +577,19 @@ class MarketCrawler:
                     seller_date=seller_date,
                     age_days=age,
                     date_checked=date_checked(seller_date, s.check_seller_date),
-                    copies=len(group),
+                    copies=len(full),
                     url=best.card.url,
                     external_id=best.card.external_id,
                     hot=is_hot(vpd, s),
                     created_at=now,
                 )
             )
+        if opened_pages and card_errors == opened_pages:  # все открытые карточки упали: сбой, а не «пусто»
+            raise RuntimeError(f"не открылась ни одна из {opened_pages} карточек")
         return finds, max((f.vpd for f in finds), default=0)
 
     async def _open_card(self, card: Listing) -> Opened | str | None:
-        """Opened; 'old' — дата на странице старше недели; None — карточка пропущена (ошибка / нет счётчика)."""
+        """Opened; 'old' — дата на странице старше недели; 'error' — не открылась; None — пропущена (нет счётчика)."""
         now, s = self.clock(), self.settings
         try:
             res = await self._fetch(card.url, SELECTORS["item_views"][0])
@@ -566,12 +604,12 @@ class MarketCrawler:
             if age is None:
                 return None
             return Opened(card, st.views, st.today, page_date, age, calc_vpd(st.views, age), st.seller_url)
-        except (StopRequested, BudgetExhausted, ProviderBlocked):
+        except (StopRequested, BudgetExhausted, ProviderBlocked, BrowserLost):
             raise
         except Exception as e:
             log.warning("[MARKET] карточка %s: %s", card.url, e)
             self.errors.append(f"{card.title[:60]}: {type(e).__name__}: {e}")
-            return None
+            return "error"
 
     async def _seller_date(self, o: Opened) -> datetime | None:
         """Дата объявления в профиле продавца; None — не удалось (карточка остаётся «дата не проверена», AC-3.4)."""
@@ -579,7 +617,7 @@ class MarketCrawler:
             res = await self._fetch(o.seller_url, SELECTORS["profile_item"][0])
             text = parse_seller_date(res.html, o.card.external_id)
             return parse_published(text, self.clock(), absolute_time=True)
-        except (StopRequested, BudgetExhausted, ProviderBlocked):
+        except (StopRequested, BudgetExhausted, ProviderBlocked, BrowserLost):
             raise
         except Exception as e:
             log.warning("[MARKET] профиль продавца %s: %s", o.seller_url, e)
@@ -597,7 +635,7 @@ class MarketCrawler:
         """Один коммит: находки + категория + run.loads (m8). cat_id=None — только счётчик загрузок."""
         with self.session_factory() as db:
             run = db.get(CrawlRun, self.run_id)
-            run.loads = self.loads
+            self._add_loads(run)
             if cat_id is not None:
                 cat = db.get(Category, cat_id)
                 cat.last_run_id = run.id

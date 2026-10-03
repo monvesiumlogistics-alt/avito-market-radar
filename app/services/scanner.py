@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import html
 import logging
 import time
 from collections.abc import Callable
@@ -89,7 +90,7 @@ class Scanner:
                 log.error("[BLOCKED] %s", e)
                 if not self.blocked:
                     await self.notifier.send_text(
-                        f"⚠️ Avito ограничил доступ: «{e}».\n"
+                        f"⚠️ Avito ограничил доступ: «{html.escape(str(e))}».\n"
                         "Мониторинг продолжит попытки по расписанию. Если не пройдёт: останови бота, "
                         "запусти python -m app.auth, пройди проверку/войди вручную и запусти снова."
                     )

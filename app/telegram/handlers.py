@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db import ListingRow, WatchRule
 from app.services.market import MarketCrawler
-from app.services.notifier import format_price
+from app.services.notifier import NO_PREVIEW, format_price
 from app.services.scanner import Scanner
 
 
@@ -135,7 +135,7 @@ def build_router(
                 f"{format_price(r.price)} · {html.escape(r.location or '')} · {_hm(r.first_seen_at)}"
                 for r in rows
             ),
-            disable_web_page_preview=True,
+            link_preview_options=NO_PREVIEW,
         )
 
     return router

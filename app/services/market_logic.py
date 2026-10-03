@@ -16,6 +16,39 @@ TITLE_CAP = 120  # одна строка находки никогда не уп
 MAX_ERRORS = 10
 TG_LIMIT = 4096
 
+# Названия разделов для заголовков порций (25 slug'ов TOP_SECTIONS); неизвестный slug -> slug без «_»
+SECTION_NAMES = {
+    "telefony": "Телефоны",
+    "audio_i_video": "Аудио и видео",
+    "tovary_dlya_kompyutera": "Товары для компьютера",
+    "noutbuki": "Ноутбуки",
+    "nastolnye_kompyutery": "Настольные компьютеры",
+    "planshety_i_elektronnye_knigi": "Планшеты и электронные книги",
+    "orgtehnika_i_rashodniki": "Оргтехника и расходники",
+    "fototehnika": "Фототехника",
+    "igry_pristavki_i_programmy": "Игры, приставки и программы",
+    "bytovaya_tehnika": "Бытовая техника",
+    "odezhda_obuv_aksessuary": "Одежда, обувь, аксессуары",
+    "detskaya_odezhda_i_obuv": "Детская одежда и обувь",
+    "tovary_dlya_detey_i_igrushki": "Товары для детей и игрушки",
+    "chasy_i_ukrasheniya": "Часы и украшения",
+    "krasota_i_zdorove": "Красота и здоровье",
+    "remont_i_stroitelstvo": "Ремонт и строительство",
+    "mebel_i_interer": "Мебель и интерьер",
+    "posuda_i_tovary_dlya_kuhni": "Посуда и товары для кухни",
+    "kollektsionirovanie": "Коллекционирование",
+    "muzykalnye_instrumenty": "Музыкальные инструменты",
+    "ohota_i_rybalka": "Охота и рыбалка",
+    "sport_i_otdyh": "Спорт и отдых",
+    "velosipedy": "Велосипеды",
+    "tovary_dlya_zhivotnyh": "Товары для животных",
+    "zapchasti_i_aksessuary": "Запчасти и аксессуары",
+}
+
+
+def section_name(slug: str) -> str:
+    return SECTION_NAMES.get(slug, slug.replace("_", " "))
+
 
 def age_days(published_at: datetime, now: datetime) -> float:
     """Возраст в днях, не меньше 1 (знаменатель vpd)."""
@@ -61,14 +94,21 @@ def _oldest_first(c: Listing) -> datetime:
     return c.published_at or datetime.max  # без даты — в конец
 
 
-def pick_cards(groups: Sequence[Sequence[Listing]], per_group: int = 2) -> list[list[Listing]]:
-    """Группы с самыми старыми карточками первыми, внутри — старшие первыми, не больше per_group.
+def pick_groups(
+    groups: Sequence[Sequence[Listing]], per_group: int = 2
+) -> list[tuple[list[Listing], Sequence[Listing]]]:
+    """(что открыть, вся группа): группы с самыми старыми карточками первыми, открыть не больше per_group.
 
+    Копии и диапазон цен в находке считаются по всей группе, а не по открытым карточкам (ADR-007).
     Слоты «по 2 на группу» не резервируются: вторую карточку краулер открывает условно и сам считает
     открытые страницы до REPORT_CARDS_PER_SUBCAT (m2).
     """
-    ordered = [sorted(g, key=_oldest_first)[:per_group] for g in groups if g]
-    return sorted(ordered, key=lambda g: _oldest_first(g[0]))
+    ordered = [(sorted(g, key=_oldest_first)[:per_group], g) for g in groups if g]
+    return sorted(ordered, key=lambda p: _oldest_first(p[0][0]))
+
+
+def pick_cards(groups: Sequence[Sequence[Listing]], per_group: int = 2) -> list[list[Listing]]:
+    return [picked for picked, _ in pick_groups(groups, per_group)]
 
 
 def is_find(vpd: int, price: int, age: float, s: Settings) -> bool:
@@ -139,9 +179,15 @@ def format_summary(
     remaining: int = 0,
     max_age_days: int = 7,
     note: str | None = None,
+    totals: str | None = None,
 ) -> str:
     """Итог прогона. covered: (подкатегория, дней покрыто) только там, где неделя не вошла в лимит страниц."""
-    lines = [f"<b>Итог проверки — {day:%d.%m}</b>", *([note] if note else []), *(find_lines or ["Находок нет."])]
+    lines = [
+        f"<b>Итог проверки — {day:%d.%m}</b>",
+        *([note] if note else []),
+        *([totals] if totals else []),
+        *(find_lines or ["Находок нет."]),
+    ]
     if covered:
         lines.append(
             "Покрыто не полностью: "
@@ -155,15 +201,39 @@ def format_summary(
     return "\n".join(lines)
 
 
+def _cut_at(line: str, limit: int) -> int:
+    """Где резать слишком длинную строку: после «, », иначе после пробела, иначе жёстко; не внутри тега и &entity;."""
+    head = line[:limit]
+    cut = limit
+    for sep in (", ", " "):
+        i = head.rfind(sep)
+        if i > 0:
+            cut = i + len(sep)
+            break
+    part = head[:cut]
+    lt = part.rfind("<")
+    if lt > part.rfind(">"):
+        cut = lt
+    else:
+        amp = part.rfind("&")
+        if amp > part.rfind(";") and len(part) - amp <= 10:
+            cut = amp
+    return cut or limit
+
+
 def split_message(text: str, limit: int = TG_LIMIT) -> list[str]:
-    """Режет по границам строк; строка длиннее limit (не бывает: заголовки обрезаны) режется жёстко."""
+    """Режет по границам строк; строка длиннее limit (бывает «Покрыто не полностью») режется по «, »."""
     chunks: list[str] = []
     current = ""
     for line in text.split("\n"):
-        while len(line) > limit:
-            line, rest = line[:limit], line[limit:]
-            chunks.append(line)
-            line = rest
+        if len(line) > limit:
+            if current:  # порядок сообщений: сначала накопленное
+                chunks.append(current)
+                current = ""
+            while len(line) > limit:
+                i = _cut_at(line, limit)
+                chunks.append(line[:i])
+                line = line[i:]
         if current and len(current) + 1 + len(line) > limit:
             chunks.append(current)
             current = line

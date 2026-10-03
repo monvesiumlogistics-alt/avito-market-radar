@@ -81,7 +81,6 @@ class CrawlRun(Base):
     loads: Mapped[int] = mapped_column(default=0)
     finds_count: Mapped[int] = mapped_column(default=0)
     progress_msg_id: Mapped[int | None]
-    note: Mapped[str | None] = mapped_column(Text)
 
 
 class Find(Base):

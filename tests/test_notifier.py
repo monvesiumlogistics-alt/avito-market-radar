@@ -30,7 +30,7 @@ def bad_request(text):
 async def test_send_text_returns_id_and_disables_preview():
     bot = FakeBot()
     assert await TelegramNotifier(bot, 7).send_text("hi") == 42
-    assert bot.calls[0][3]["disable_web_page_preview"] is True
+    assert bot.calls[0][3]["link_preview_options"].is_disabled is True
 
 
 async def test_send_text_error_logged_returns_none():
@@ -40,7 +40,8 @@ async def test_send_text_error_logged_returns_none():
 async def test_edit_text_ok_and_preview_disabled():
     bot = FakeBot()
     await TelegramNotifier(bot, 7).edit_text(42, "new")
-    assert bot.calls[0][2] == {"chat_id": 7, "message_id": 42, "disable_web_page_preview": True}
+    kw = bot.calls[0][2]
+    assert (kw["chat_id"], kw["message_id"]) == (7, 42) and kw["link_preview_options"].is_disabled is True
 
 
 async def test_edit_text_not_modified_swallowed_silently(caplog):
