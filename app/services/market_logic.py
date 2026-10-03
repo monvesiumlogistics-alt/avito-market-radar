@@ -3,6 +3,7 @@
 import html
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from itertools import groupby
 from urllib.parse import quote_plus
@@ -169,19 +170,164 @@ GOOFISH_MAX_TOKENS = 4
 _LATIN_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9.\-]*")
 
 
-def goofish_query(title: str) -> str | None:
-    """Латинские токены названия (бренд + модель) для поиска на goofish; None, если модели в названии нет."""
-    tokens = []
-    for raw in title.split():
-        t = raw.strip(".,;:!?()[]{}\"'«»-")
-        if (
-            len(t) >= 2
-            and _LATIN_TOKEN.fullmatch(t)
-            and re.search(r"[A-Za-z]", t)
-            and t.lower() not in GOOFISH_STOP
+_DIGITS = re.compile(r"\d+(?:\.\d+)?")
+_YEAR = re.compile(r"(?:19|20)\d\d")
+_EDGE = ".,;:!?()[]{}\"'«»-"
+
+
+def _model_tokens(title: str) -> list[tuple[str, bool]]:
+    """Токены модели по порядку: (токен, is_latin). Латинские слова/коды (>= 2 символов, хотя бы одна буква, не из
+    GOOFISH_STOP) и числа рядом с таким словом («iPhone 15», «DDJ 400»); годы не берём. Ничего не добавляем от себя."""
+    raw = [t.strip(_EDGE) for t in title.split()]
+    latin = [
+        len(t) >= 2
+        and bool(_LATIN_TOKEN.fullmatch(t))
+        and bool(re.search(r"[A-Za-z]", t))
+        and t.lower() not in GOOFISH_STOP
+        for t in raw
+    ]
+    out: list[tuple[str, bool]] = []
+    for i, t in enumerate(raw):
+        if latin[i]:
+            out.append((t, True))
+        elif (
+            _DIGITS.fullmatch(t)
+            and not _YEAR.fullmatch(t)
+            and ((i > 0 and latin[i - 1]) or (i + 1 < len(raw) and latin[i + 1]))
         ):
-            tokens.append(t)
-    return " ".join(tokens[:GOOFISH_MAX_TOKENS]) or None
+            out.append((t, False))
+    return out
+
+
+def goofish_query(title: str) -> str | None:
+    """Латинские токены названия (бренд + модель, числа рядом с ними) для поиска на goofish; None без модели."""
+    return " ".join(t for t, _ in _model_tokens(title)[:GOOFISH_MAX_TOKENS]) or None
+
+
+def model_key(title: str) -> str | None:
+    """Ключ модели для склейки объявлений разных продавцов: первые 2 латинских токена (+ числа между/после них),
+    в нижнем регистре. «Aimiko u2 pro 3000w» и «Aimiko U2 Pro 63V/65Ah» -> «aimiko u2» (версии/мощность в ключ
+    не входят, их разброс виден в диапазонах vpd и цены). Консервативно: нужен токен с цифрой или 2 латинских слова."""
+    key: list[str] = []
+    latin = 0
+    for tok, is_latin in _model_tokens(title):
+        if latin == 2:
+            if not is_latin:
+                key.append(tok)  # число сразу после второго слова: «apple iphone 15»
+            break
+        key.append(tok)
+        latin += is_latin
+    if not key or (latin < 2 and not any(c.isdigit() for t in key for c in t)):
+        return None
+    return " ".join(key).lower()
+
+
+@dataclass
+class ModelGroup:
+    key: str
+    count: int
+    vpd_min: int
+    vpd_max: int
+    price_min: int
+    price_max: int
+    best: object  # находка с максимальным vpd
+
+
+def model_groups(finds: Sequence) -> list[ModelGroup]:
+    """Модели, встретившиеся >= 2 раз (разные объявления: external_id), по убыванию count x max vpd."""
+    by_key: dict[str, dict[str, object]] = {}
+    for f in finds:
+        if key := model_key(f.title):
+            by_key.setdefault(key, {})[getattr(f, "external_id", f.title)] = f
+    groups = []
+    for key, items in by_key.items():
+        fs = list(items.values())
+        if len(fs) < 2:
+            continue
+        best = max(fs, key=lambda f: f.vpd)
+        groups.append(
+            ModelGroup(
+                key, len(fs), min(f.vpd for f in fs), best.vpd, min(f.price_min for f in fs),
+                max(f.price_max for f in fs), best,
+            )
+        )  # fmt: skip
+    return sorted(groups, key=lambda g: -g.count * g.vpd_max)
+
+
+def format_models(groups: Sequence[ModelGroup]) -> list[str]:
+    if not groups:
+        return []
+    lines = ["<b>🔁 Модели с несколькими объявлениями</b>"]
+    for g in groups:
+        vpd = f"{g.vpd_min}" if g.vpd_min == g.vpd_max else f"{g.vpd_min}–{g.vpd_max}"
+        price = f"{_rub(g.price_min)} ₽" if g.price_min == g.price_max else f"{_rub(g.price_min)}–{_rub(g.price_max)} ₽"
+        parts = [
+            f"{html.escape(g.key)} ×{g.count}",
+            f"{vpd}/день",
+            price,
+            f'<a href="{html.escape(g.best.url)}">лучшее</a>',
+        ]
+        if gf := goofish_url(g.best.title):
+            parts.append(f'<a href="{html.escape(gf)}">🔎 goofish</a>')
+        lines.append(" · ".join(parts))
+    return lines
+
+
+# --- маржа ---
+
+WEIGHT_PRESETS = (  # (регулярка по названию + категории в нижнем регистре, кг); первое совпадение, порядок важен
+    (re.compile(r"электровелосипед|электро-велосипед|e-?bike"), 28.0),
+    (re.compile(r"велосипед"), 15.0),
+    (re.compile(r"коляск"), 12.0),
+    (re.compile(r"автокресл"), 10.0),
+    (re.compile(r"самокат"), 15.0),
+    (re.compile(r"рации|рация|радиостанц"), 1.0),
+    (re.compile(r"телефон|смартфон"), 0.5),
+    (re.compile(r"часы"), 0.3),
+    (re.compile(r"\bdj\b|контроллер"), 6.0),
+)
+DEFAULT_WEIGHT_KG = 3.0
+
+
+def weight_kg(*texts: str) -> float:
+    hay = " ".join(texts).lower()
+    return next((kg for rx, kg in WEIGHT_PRESETS if rx.search(hay)), DEFAULT_WEIGHT_KG)
+
+
+@dataclass(frozen=True)
+class Margin:
+    yuan: int
+    kg: float
+    cost: int  # себестоимость: товар + наземка
+    margin: int
+    pct: int
+    air_margin: int
+    air_pct: int
+
+
+def calc_margin(price_rub: int, yuan: int, kg: float, rate: float, ground_per_kg: float, air_per_kg: float) -> Margin:
+    """Продажа по цене объявления (price_rub) минус ¥ x курс минус доставка весом kg. pct = маржа / продажа."""
+    goods = yuan * rate
+    cost, air_cost = goods + kg * ground_per_kg, goods + kg * air_per_kg
+    pct = lambda m: round(100 * m / price_rub) if price_rub else 0  # noqa: E731
+    return Margin(
+        yuan,
+        kg,
+        round(cost),
+        round(price_rub - cost),
+        pct(price_rub - cost),
+        round(price_rub - air_cost),
+        pct(price_rub - air_cost),
+    )
+
+
+def format_margin(m: Margin, price_rub: int, rate: float, ground_per_kg: float) -> str:
+    kg = f"{m.kg:g}"
+    return (
+        f"себест. ~{_rub(m.cost)} ₽ (¥{m.yuan}×{rate:g} + доставка {kg} кг×{ground_per_kg:g}),"
+        f" продажа ~{_rub(price_rub)} ₽"
+        f" → маржа ~{_rub(m.margin)} ₽ ({m.pct}%); авиа: ~{_rub(m.air_margin)} ₽ ({m.air_pct}%)"
+    )
 
 
 def goofish_url(title: str) -> str | None:
@@ -205,6 +351,8 @@ def format_find(f: Find, category: str, seen_on: datetime | None = None) -> str:
     parts = [price, views, age, f"выставлено {f.copies} {_times(f.copies)}", html.escape(category)]
     if seen_on:
         parts.append(f"уже было {seen_on:%d.%m}")
+    if (find_id := getattr(f, "id", None)) is not None:
+        parts.append(f"#{find_id}")  # для /price <id> <юани>
     if goofish := goofish_url(f.title):
         parts.append(f'<a href="{html.escape(goofish)}">🔎 goofish</a>')
     link = f'<a href="{html.escape(f.url)}">{html.escape(f.title[:TITLE_CAP])}</a>'
@@ -227,6 +375,7 @@ def format_summary(
     max_age_days: int = 7,
     note: str | None = None,
     totals: str | None = None,
+    models: Sequence[str] = (),
 ) -> str:
     """Итог прогона. covered: (подкатегория, дней покрыто) только там, где неделя не вошла в лимит страниц."""
     lines = [
@@ -234,6 +383,7 @@ def format_summary(
         *([note] if note else []),
         *([totals] if totals else []),
         *(find_lines or ["Находок нет."]),
+        *models,
     ]
     if covered:
         lines.append(

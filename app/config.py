@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # сколько ждать, пока человек пройдёт капчу в окне бота (нужен HEADLESS=false); 0 = не ждать
     captcha_wait_minutes: int = 15
     check_seller_date: bool = True
+    # маржа (/price): курс юаня и тарифы доставки Китай -> Москва, ₽ за кг
+    cny_rate: float = 12.2
+    cargo_rub_per_kg: float = 500  # наземка
+    cargo_air_rub_per_kg: float = 3000  # авиа
     page_delay_min: float = 2
     page_delay_max: float = 5
 

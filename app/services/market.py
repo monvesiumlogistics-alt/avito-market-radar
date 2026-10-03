@@ -36,11 +36,13 @@ from app.services.market_logic import (
     date_checked,
     find_age,
     format_find,
+    format_models,
     format_progress,
     format_summary,
     group_cards,
     is_find,
     is_hot,
+    model_groups,
     norm_title,
     pick_groups,
     section_name,
@@ -390,6 +392,7 @@ class MarketCrawler:
                 s.report_max_age_days,
                 STATUS_NOTES.get(status),
                 totals,
+                format_models(model_groups(finds)),
             )
             ids = [f.id for f in unsent]
         if await self._send(text) and ids:

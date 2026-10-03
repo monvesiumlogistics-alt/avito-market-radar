@@ -14,7 +14,7 @@ from app.services.market_cmds import cats_text, export_csv, set_feedback, set_sk
 from app.services.market_logic import crawl_order, feedback_factor
 from app.telegram.handlers import build_router
 from tests.test_handlers import ADMIN, FakeCrawler, FakeSession, send
-from tests.test_market import NOW, life, runs
+from tests.test_market import NOW, card_url, item_html, life, runs, search_html, summary_text, url_of
 from tests.test_market_logic import cat as logic_cat
 
 
@@ -247,3 +247,53 @@ async def test_portion_without_keyboard_over_8_finds(tmp_path):
     t.crawler.start()
     await t.crawler._task
     assert all(m is None for m in t.notifier.markups)
+
+
+# --- G2/G3 в командах ---
+
+
+def _aimiko(sf):
+    for t, v, _p in zip(
+        ("Aimiko u2 pro premium 3000w", "Aimiko U2 Pro 63V/65Ah", "Aimiko u2 PRO 3000w", "Aimiko u2 premium"),
+        (535, 411, 134, 63),
+        (70000, 49900, 120000, 120000),
+        strict=True,
+    ):
+        add_find(sf, t, v, key=t.lower(), cat_id=1)
+
+
+def test_top_has_models_block_and_margin(tmp_path):
+    sf = seed(tmp_path)
+    _aimiko(sf)
+    with sf() as db:
+        f = db.scalars(select(Find).order_by(Find.vpd.desc())).first()
+        f.china_price = 2300
+        db.commit()
+        text = "\n".join(top_messages(db, 7, NOW))
+    assert "🔁 Модели с несколькими объявлениями" in text and "aimiko u2 ×4" in text
+    assert "↳ себест. ~" in text and "¥2300×12.2" in text and "доставка 3 кг" in text  # «Аккордеоны»: вес по умолчанию
+
+
+async def test_price_handler(tmp_path):
+    sf = seed(tmp_path)
+    fid = add_find(sf, "Bugaboo Dragonfly коляска", 200, cat_id=1)
+    t = make(sf)
+    await send(t, f"/price {fid} 2300")
+    reply = t.session.requests[-1].text
+    assert f"Находка #{fid}" in reply and "доставка 12 кг" in reply and "маржа" in reply
+    with sf() as db:
+        assert db.get(Find, fid).china_price == 2300
+    await send(t, "/price 999 100")
+    assert "не найдена" in t.session.requests[-1].text
+    await send(t, "/price abc")
+    assert t.session.requests[-1].text.startswith("/price <номер")
+
+
+async def test_summary_models_block_in_run(tmp_path):
+    t = life(tmp_path, {"A": [900, 900]})
+    for n in (1, 2):  # две находки одной модели в разных подкатегориях
+        t.pages[url_of(f"Ac{n}")] = search_html((f"M{n}", f"Pioneer DDJ 400 версия {n}", 20000 + n, "1 день назад"))
+        t.pages[card_url(f"M{n}")] = item_html(900)
+    t.crawler.start()
+    await t.crawler._task
+    assert "pioneer ddj 400 ×2" in summary_text(t)

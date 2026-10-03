@@ -8,28 +8,71 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import Settings
 from app.db import Category, Find
-from app.services.market_logic import format_find, goofish_url, section_name, split_message
+from app.services.market_logic import (
+    calc_margin,
+    format_find,
+    format_margin,
+    format_models,
+    goofish_url,
+    model_groups,
+    section_name,
+    split_message,
+    weight_kg,
+)
 
 TOP_LIMIT = 15
 
 
+def _window(db: Session, days: int, now: datetime) -> list[Find]:
+    return list(
+        db.scalars(select(Find).where(Find.created_at >= now - timedelta(days=days)).order_by(Find.vpd.desc()))
+    )
+
+
 def top_finds(db: Session, days: int, now: datetime, limit: int = TOP_LIMIT) -> list[Find]:
     """Лучшие находки за days дней: по group_key остаётся лучшая по vpd, сортировка по vpd, не больше limit."""
-    finds = db.scalars(select(Find).where(Find.created_at >= now - timedelta(days=days)).order_by(Find.vpd.desc()))
     best: dict[str, Find] = {}
-    for f in finds:  # уже по убыванию vpd: первая в группе лучшая
+    for f in _window(db, days, now):  # уже по убыванию vpd: первая в группе лучшая
         best.setdefault(f.group_key, f)
     return sorted(best.values(), key=lambda f: -f.vpd)[:limit]
 
 
-def top_messages(db: Session, days: int, now: datetime) -> list[str]:
+def margin_text(f: Find, category: str, s: Settings) -> str | None:
+    """Строка маржи, если известна цена в Китае (/price)."""
+    if not f.china_price:
+        return None
+    kg = weight_kg(f.title, category)
+    m = calc_margin(f.price_min, f.china_price, kg, s.cny_rate, s.cargo_rub_per_kg, s.cargo_air_rub_per_kg)
+    return format_margin(m, f.price_min, s.cny_rate, s.cargo_rub_per_kg)
+
+
+def top_messages(db: Session, days: int, now: datetime, s: Settings | None = None) -> list[str]:
     finds = top_finds(db, days, now)
     if not finds:
         return [f"За {days} дн находок нет."]
+    s = s or Settings(_env_file=None)
     names = dict(db.execute(select(Category.id, Category.name)).all())
-    lines = [f"<b>Топ находок за {days} дн</b>", *(format_find(f, names.get(f.category_id, "?")) for f in finds)]
+    lines = [f"<b>Топ находок за {days} дн</b>"]
+    for f in finds:
+        cat = names.get(f.category_id, "?")
+        lines.append(format_find(f, cat))
+        if margin := margin_text(f, cat, s):
+            lines.append("   ↳ " + margin)
+    lines += format_models(model_groups(_window(db, days, now)))
     return split_message("\n".join(lines))
+
+
+def set_price(db: Session, find_id: int, yuan: int, s: Settings) -> str | None:
+    """/price <id> <юани>: запомнить цену в Китае и показать маржу; None — находки нет."""
+    f = db.get(Find, find_id)
+    if f is None:
+        return None
+    f.china_price = yuan
+    db.commit()
+    cat = db.get(Category, f.category_id)
+    return margin_text(f, cat.name if cat else "", s)
 
 
 CSV_HEADER = (

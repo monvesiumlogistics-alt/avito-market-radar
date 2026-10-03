@@ -200,7 +200,7 @@ def test_goofish_query():
     assert goofish_query("Коляска детская") is None
     assert goofish_query("Pioneer DDJ-400 новый") == "Pioneer DDJ-400"
     assert goofish_query("New Original Pioneer, set 5 kg cm") == "Pioneer"
-    assert goofish_query("Apple iPhone 15 Pro Max 256 Гб black") == "Apple iPhone Pro Max"
+    assert goofish_query("Apple iPhone 15 Pro Max 256 Гб black") == "Apple iPhone 15 Pro"
     assert goofish_query("12345 Куртка") is None  # цифры без латинской буквы — не модель
     assert goofish_url("Pioneer DDJ-400") == "https://www.goofish.com/search?q=Pioneer+DDJ-400"
     assert goofish_url("Коляска") is None
@@ -209,3 +209,76 @@ def test_goofish_query():
 def test_format_find_goofish_link_only_with_model():
     assert 'href="https://www.goofish.com/search?q=Sony+A7">🔎 goofish</a>' in format_find(find(title="Sony A7"), "c")
     assert "goofish" not in format_find(find(title="Коляска детская"), "c")
+
+
+def test_goofish_digits_next_to_latin_and_nothing_invented():
+    from app.services.market_logic import goofish_query
+
+    assert goofish_query("iPhone 15 Pro Max 256 Гб") == "iPhone 15 Pro Max"
+    assert goofish_query("Pioneer DDJ 400 новый") == "Pioneer DDJ 400"
+    assert goofish_query("Куртка 52 размер Nike") == "Nike"  # 52 не рядом с латинским словом
+    assert goofish_query("Canyon Endurace 2019 XL") == "Canyon Endurace XL"  # год не модель
+    assert goofish_query("iPhone 15") == "iPhone 15" and "Apple" not in goofish_query("iPhone 15 Pro")
+
+
+REAL = (
+    "Aimiko u2 pro premium 3000w",
+    "Aimiko U2 Pro 63V/65Ah 9a Strong",
+    "Aimiko u2 PRO 3000w",
+    "Aimiko u2 premium 3000w",
+)
+
+
+def test_model_key_groups_all_four_real_aimiko_titles():
+    from app.services.market_logic import model_key
+
+    assert {model_key(t) for t in REAL} == {"aimiko u2"}
+    assert model_key("Apple iPhone 15 Pro Max") == "apple iphone 15"
+    assert model_key("Apple iPhone 14") == "apple iphone 14"  # разные поколения не склеиваются
+    assert model_key("iPhone 15 Pro Max") == "iphone 15 pro"
+    assert model_key("Pioneer DDJ 400") == "pioneer ddj 400"
+    assert model_key("Wenbox U5") == "wenbox u5"
+    assert model_key("Коляска детская") is None
+    assert model_key("Колонка JBL") is None  # одно слово без цифры — слишком общий ключ
+    assert model_key("Doona X почти новая коляска") is None
+
+
+def test_model_groups_and_format():
+    from app.services.market_logic import format_models, model_groups
+
+    rows = [
+        NS(title=t, vpd=v, price_min=p, price_max=p, url=f"https://www.avito.ru/x_{i}", external_id=str(i))
+        for i, (t, v, p) in enumerate(zip(REAL, (535, 411, 134, 63), (70000, 49900, 120000, 120000), strict=True), 1)
+    ] + [NS(title="Wenbox U5", vpd=95, price_min=1, price_max=1, url="u", external_id="9")]
+    (g,) = model_groups(rows)  # Wenbox встретился один раз — не модель с несколькими объявлениями
+    assert (g.key, g.count, g.vpd_min, g.vpd_max, g.price_min, g.price_max) == ("aimiko u2", 4, 63, 535, 49900, 120000)
+    assert g.best.external_id == "1"
+    lines = format_models([g])
+    assert lines[0].startswith("<b>🔁 Модели") and "aimiko u2 ×4 · 63–535/день · 49 900–120 000 ₽" in lines[1]
+    assert 'href="https://www.avito.ru/x_1">лучшее</a>' in lines[1] and "🔎 goofish" in lines[1]
+    assert format_models([]) == []
+    dup = [rows[0], NS(**{**rows[0].__dict__})]  # одно объявление, найденное дважды
+    assert model_groups(dup) == []
+
+
+def test_margin_and_weight():
+    from app.services.market_logic import calc_margin, format_margin, weight_kg
+
+    assert weight_kg("Bugaboo коляска", "") == 12 and weight_kg("Aimiko электровелосипед") == 28
+    assert weight_kg("Cube велосипед") == 15 and weight_kg("Yaesu рация") == 1 and weight_kg("Pioneer DJ DDJ-400") == 6
+    assert weight_kg("Нечто") == 3 and weight_kg("adjust") == 3  # «dj» только отдельным словом
+    m = calc_margin(49000, 2300, 12, 12.2, 500, 3000)
+    assert m.cost == round(2300 * 12.2 + 12 * 500) == 34060
+    assert (m.margin, m.pct) == (14940, 30) and m.air_margin == 49000 - round(2300 * 12.2 + 36000)
+    text = format_margin(m, 49000, 12.2, 500)
+    assert "себест. ~34 060 ₽ (¥2300×12.2 + доставка 12 кг×500)" in text and "маржа ~14 940 ₽ (30%)" in text
+    assert calc_margin(0, 100, 1, 12.2, 500, 3000).pct == 0
+
+
+def test_find_line_shows_id_when_known():
+    assert " · #123" in format_find(find(id=123), "c") and "#" not in format_find(find(), "c")
+
+
+def test_summary_includes_models_block():
+    text = format_summary(NOW, ["l"], models=["<b>🔁 Модели</b>", "m"])
+    assert text.split("\n")[1:4] == ["l", "<b>🔁 Модели</b>", "m"]

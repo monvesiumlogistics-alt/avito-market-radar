@@ -8,10 +8,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
+from app.config import settings
 from app.db import ListingRow, WatchRule
 from app.providers.avito_parser import msk_now
 from app.services.market import MarketCrawler
-from app.services.market_cmds import cats_text, export_csv, set_feedback, set_skipped, top_messages
+from app.services.market_cmds import cats_text, export_csv, set_feedback, set_price, set_skipped, top_messages
 from app.services.notifier import NO_PREVIEW, format_price
 from app.services.scanner import Scanner
 
@@ -47,6 +48,7 @@ def build_router(
             "<b>Что выложить</b>: проверка рынка, час-полтора\n"
             "/report: запустить или продолжить, /stop: остановить\n"
             "/top [дней]: лучшие находки из базы, /export: все находки файлом CSV\n"
+            "/price номер юани: маржа находки\n"
             "/cats: разделы, /skip текст, /unskip текст: выключить или вернуть категории",
             reply_markup=KEYBOARD,
         )
@@ -66,7 +68,7 @@ def build_router(
         arg = (command.args or "").strip()
         days = int(arg) if arg.isdigit() and 0 < int(arg) <= 365 else 7
         with session_factory() as db:
-            chunks = top_messages(db, days, msk_now())
+            chunks = top_messages(db, days, msk_now(), settings)
         for chunk in chunks:
             await msg.answer(chunk, link_preview_options=NO_PREVIEW)
 
@@ -78,6 +80,16 @@ def build_router(
             await msg.answer("Находок пока нет.")
             return
         await msg.answer_document(BufferedInputFile(data, filename=f"finds_{msk_now():%Y%m%d}.csv"))
+
+    @router.message(Command("price"))
+    async def price(msg: Message, command: CommandObject) -> None:
+        parts = (command.args or "").replace("¥", "").split()
+        if len(parts) != 2 or not all(p.isdigit() for p in parts) or int(parts[1]) <= 0:
+            await msg.answer("/price <номер находки #…> <цена в юанях>, например: /price 123 2300")
+            return
+        with session_factory() as db:
+            res = set_price(db, int(parts[0]), int(parts[1]), settings)
+        await msg.answer(f"Находка #{parts[0]}: " + res if res else f"Находка #{html.escape(parts[0])} не найдена")
 
     @router.message(Command("cats"))
     async def cats(msg: Message) -> None:
