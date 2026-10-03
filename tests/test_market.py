@@ -101,6 +101,7 @@ class FakeNotifier:
 
 def setup(tmp_path, pages: dict, seed: bool = True, **settings):
     sf = init_db(f"sqlite:///{tmp_path}/t.db")
+    settings.setdefault("block_cooldowns", 0)  # паузы после блока проверяются в test_cooldown
     s = Settings(_env_file=None, **settings)
     with sf() as db:
         cat = Category(section="muzykalnye_instrumenty", name="Аккордеоны", url=CAT_URL, discovered_at=NOW)
@@ -463,6 +464,7 @@ class RecNotifier:
 def life(tmp_path, cats: dict[str, list[int]], gate=None, **settings):
     """cats: раздел -> просмотры карточки по подкатегориям (у каждой одна карточка с находкой)."""
     sf = init_db(f"sqlite:///{tmp_path}/t.db")
+    settings.setdefault("block_cooldowns", 0)
     s = Settings(_env_file=None, report_sections=",".join(cats), check_seller_date=False, **settings)
     pages: dict = {}
     with sf() as db:
@@ -479,6 +481,7 @@ def life(tmp_path, cats: dict[str, list[int]], gate=None, **settings):
     t.notifier = RecNotifier(provider.events)
     t.crawler = MarketCrawler(sf, lambda: provider, t.notifier, s, gate=gate, clock=lambda: t.now[0])
     t.crawler.send_delay = 0
+    t.crawler.sweep_pause = 0
     return t
 
 

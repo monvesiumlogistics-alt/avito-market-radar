@@ -68,6 +68,7 @@ def format_sweep_summary(
     status: str,
     note: str | None = None,
     premium: bool = False,
+    pauses: int = 0,
 ) -> str:
     """rows: ScanCategory за прогон с именем категории (.name). Телеметрия обхода одним сообщением."""
     stops = Counter(r.stop_reason for r in rows)
@@ -83,6 +84,8 @@ def format_sweep_summary(
     ]
     if captcha_waits:
         lines.append(f"🧩 Капча: <code>{captcha_waits}</code>")
+    if pauses:
+        lines.append(f"⏸ Пауз после блока: <code>{pauses}</code>")
     if errors:
         lines.append(f"{icon('❗️', premium)} Ошибок: <code>{len(errors)}</code>")
     short = sorted((r for r in rows if r.stop_reason == "depth_cap"), key=lambda r: r.window_hours)

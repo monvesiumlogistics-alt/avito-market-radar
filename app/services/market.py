@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import math
+import random
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -135,6 +136,10 @@ class MarketCrawler:
         self.send_delay = 1.0  # пауза между кусками длинного сообщения (лимиты Telegram); в тестах 0
         self.captcha_poll = 5.0  # с между проверками, прошёл ли человек капчу
         self.reopen_delay = 2.0  # с до повторного запуска браузера (m10)
+        self.cooldown_unit = 60.0  # секунд в «минуте» паузы после блока (в тестах меньше)
+        self.cooldown_poll = 5.0  # с между проверками /stop во время паузы
+        self.sweep_pause = settings.sweep_pause_seconds
+        self.blocks = 0  # пауз после блока в этом прогоне
         self._task: asyncio.Task | None = None
         self._owns_gate = False
         self._progress_at: datetime | None = None
@@ -195,7 +200,7 @@ class MarketCrawler:
                 reply = "Начинаю проверку рынка" if kind == "report" else "Начинаю обход рынка"
             db.commit()
             self.run_id, self.loads, self._loads_saved = run.id, 0, 0
-        self.kind, self.captcha_waits, self._quiet = kind, 0, 0
+        self.kind, self.captcha_waits, self._quiet, self.blocks = kind, 0, 0, 0
         self.stop_requested, self.errors = False, []
         self._progress_at = self._progress_id = None
         self.gone_ids = []
@@ -531,7 +536,7 @@ class MarketCrawler:
         note = STATUS_NOTES.get(status, "").replace("/report", "/sweep") or None
         return format_sweep_summary(
             f"{self.clock():%d.%m}", rows, len(names), self._quiet, self.loads, self.captcha_waits, self.errors,
-            status, note, self.settings.premium_emoji,
+            status, note, self.settings.premium_emoji, pauses=self.blocks,
         )  # fmt: skip
 
     # --- загрузки ---
@@ -544,7 +549,13 @@ class MarketCrawler:
             raise BudgetExhausted
         if self.gate and self.gate.contended:
             await self._handover()
+        await self._sweep_pause()
         self.loads += 1
+
+    async def _sweep_pause(self) -> None:
+        """Обход идёт фоном: ровный медленный темп вместо пачек — реже упираемся в лимит Avito (ADR-018)."""
+        if self.kind == "sweep" and self.sweep_pause > 0:
+            await asyncio.sleep(self.sweep_pause * random.uniform(0.5, 1.5))
 
     async def _open_provider(self) -> AvitoProvider:
         """Запуск браузера; один повтор через паузу: профиль после close() иногда ещё занят (m10)."""
@@ -579,14 +590,44 @@ class MarketCrawler:
         self.loads += 1
 
     async def _fetch(self, url: str, ready_selector: str | None = None):
+        """Блок: сначала человек (капча, ADR-005); не прошёл/нечего проходить — пауза и повтор без человека
+        (BLOCK_COOLDOWNS раз, каждая пауза вдвое длиннее, ADR-018); потом ProviderBlocked -> «blocked»."""
         await self._before_load()
-        try:
-            return await self._timed_fetch(url, ready_selector)
-        except ProviderBlocked as e:
-            if not await self._wait_for_human(url, e):
-                raise
+        pauses = 0
+        while True:
+            try:
+                return await self._timed_fetch(url, ready_selector)
+            except ProviderBlocked as e:
+                if not await self._wait_for_human(url, e):
+                    if pauses >= self.settings.block_cooldowns:
+                        raise
+                    await self._cooldown(pauses)
+                    pauses += 1
+                elif pauses > self.settings.block_cooldowns:  # человек «прошёл», а блок снова: не крутиться вечно
+                    raise
             await self._before_load()
-            return await self._timed_fetch(url, ready_selector)
+
+    async def _cooldown(self, n: int) -> None:
+        """Пауза после блока: браузер остаётся открытым, /stop работает. ponytail: замок браузера держится всю паузу,
+        мониторинг ждёт — он выключен; отдавать замок, если мониторинг вернётся."""
+        minutes = self.settings.block_cooldown_minutes * 2**n
+        self.blocks += 1
+        until = self.clock() + timedelta(minutes=minutes)
+        log.warning("[MARKET] блок без капчи: пауза %d мин", minutes)
+        await self.notifier.send_text(
+            f"⏸ Avito ограничил доступ. Пауза <code>{minutes}</code> мин, продолжу сам в {until:%H:%M}"
+        )
+        before, self._current = self._current, f"⏸ пауза после блока до {until:%H:%M}"
+        await self._send_progress(force=True)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + minutes * self.cooldown_unit
+        try:
+            while loop.time() < deadline:
+                if self.stop_requested:
+                    raise StopRequested
+                await asyncio.sleep(max(min(self.cooldown_poll, deadline - loop.time()), 0))
+        finally:
+            self._current = before
 
     async def _timed_fetch(self, url: str, ready_selector: str | None):
         if self.provider is None:

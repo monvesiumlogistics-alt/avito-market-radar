@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     sweep_max_pages: int = 10
     sweep_known_stop: float = 0.85  # стоп, когда такая доля непромо-объявлений страницы уже знакома
     sweep_quiet_per_day: int = 25  # тише — категория обходится через день
+    # Блок без капчи (HTTP 429/439, «проблема с IP»): пауза и продолжение без человека (ADR-018)
+    block_cooldowns: int = 3  # сколько пауз подряд, каждая вдвое длиннее; 0 — сразу «blocked»
+    block_cooldown_minutes: int = 60
+    sweep_pause_seconds: float = 10  # доп. пауза перед каждой загрузкой обхода (±50%): ровный темп
     page_delay_min: float = 2
     page_delay_max: float = 5
 

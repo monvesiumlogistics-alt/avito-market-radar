@@ -138,3 +138,11 @@
 - Confidence = min(volume/20, history days/14, coverage), ×0.8 if the same state was not there yesterday; HIGH ≥ 0.7, MEDIUM ≥ 0.4, LOW otherwise. MEDIUM+ goes to «🔥 Предложение растёт» / «🧊 Остывает», LOW only to the collapsed «👀 Наблюдаю».
 - Models (`ads.model_key`, date = `posted_at` or first seen, city = first segment of `url_path`): «🔁 Модели у многих продавцов · 7 дн» — ≥ 3 listings in ≥ 2 cities, ranked by cities then count, with shops, median price, main category, link to an Avito search by the model; «🚀 Новые модели» — ≥ 5 listings in ≥ 3 cities in the last 3 days and ≤ 2 in the 14 days before, shown only after ≥ 7 days of history.
 - Not yet (Phase 4+): attention (views vs category baseline), «Исследовать сегодня», persisted `signal` table.
+
+## ADR-018: Survive IP blocks without a human; steady sweep pace (2026-10-04)
+- Status: accepted (user: bot must run full time; on 2026-10-03/04 Avito answered HTTP 439 «Вы робот?» with no captcha for hours, the run ended `blocked` and the browser closed).
+- Still no bypass (ADR-005): no captcha solving, no fingerprint spoofing, no IP rotation.
+- `_fetch`: on a block the human wait runs first (unchanged); if nobody passes it (or there is nothing to pass), the crawler pauses `BLOCK_COOLDOWN_MINUTES × 2^n` (60 → 120 → 240) up to `BLOCK_COOLDOWNS` (3) times, telling Telegram «⏸ … продолжу сам в HH:MM», with the browser left open and `/stop` honoured, then retries the same page. Only after the pauses run out does the run end `blocked`. Pauses are counted in the sweep summary.
+- `wait_unblocked` counts as passed only when the probe tab holds a real Avito page (`data-marker=`); a blank tab used to count as passed (false «✅ Проверка пройдена»).
+- Sweep pace: extra `SWEEP_PAUSE_SECONDS` (10 s, ±50%) before each sweep load on top of the provider delay: a slow, even rate instead of bursts. `/report` keeps its pace.
+- Researched alternatives (not done): a data provider for search results ([rest-app.net](https://rest-app.net/api), 4 000 ₽/month, all categories, no view counts) would replace the sweep with zero blocks, leaving only card views to the browser; a single static RU residential/mobile proxy (datacenter IPs burn within an hour per [kalinkindev 2026](https://kalinkindev.ru/blog/kak-parsit-avito-2026/)). User decision pending.
