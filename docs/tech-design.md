@@ -51,7 +51,7 @@ categories  id PK, section str(64), name str(200), url str(300) UNIQUE, discover
             last_crawled_at NULL, last_run_id NULL, last_best_vpd int NULL, last_status str(16) NULL  -- ok|error
             last_days_covered float NULL
 crawl_runs  id PK, started_at, finished_at NULL, status str(16)  -- running|stopped|blocked|interrupted|budget|done|failed
-            loads int=0, finds_count int=0, progress_msg_id int NULL, note str NULL
+            loads int=0, finds_count int=0, progress_msg_id int NULL  # колонка note убрана из модели (ADR-007)
 finds       id PK, run_id FK, category_id FK, group_key str(300) INDEX, title, price_min int, price_max int,
             vpd int, today int NULL, age_days float, date_checked bool, copies int, url, external_id str(64),
             hot bool, sent bool=0, created_at, china_price int NULL   -- US-8, в v1 пусто
@@ -67,7 +67,7 @@ finds       id PK, run_id FK, category_id FK, group_key str(300) INDEX, title, p
 
 **Старт** (`/report`): идёт задача → «проверка уже идёт» + текущий прогресс (AC-1.2). Иначе последний прогон в статусе
 `stopped|blocked|interrupted|failed` и `started_at > now − REPORT_RESUME_HOURS` → «Продолжаю проверку» с тем же `run`
-(бюджет считается от уже сделанных `loads`); иначе новый `run` и «Начинаю проверку рынка» (AC-1.1, AC-4.4).
+(бюджет каждого нажатия считается заново, `run.loads` накопительный, ADR-007); иначе новый `run` и «Начинаю проверку рынка» (AC-1.1, AC-4.4).
 Обход идёт в `asyncio.create_task`, ссылка хранится в crawler; хендлер сразу отвечает.
 
 **Цикл**:
@@ -83,7 +83,7 @@ async with gate.hold(), provider_factory() as p:
       except Exception: cat.last_status=error; log          # AC-5.2
       сменился раздел и есть неотправленные находки → порция (AC-4.2)
       прогресс: edit_text не чаще 1/мин (AC-4.1)
-итог (все находки прогона) + «осталось N подкатегорий, пойдут первыми» при бюджете (AC-4.5)
+итог (счётчики + ещё не отправленные находки, ADR-007) + «осталось N подкатегорий, пойдут первыми» при бюджете (AC-4.5)
 ```
 Падение всей задачи → `status=failed`, лог + «⚠️ Проверка упала, найденное сохранено»; мониторинг не затронут (AC-5.4).
 
@@ -142,7 +142,7 @@ async with gate.hold(), provider_factory() as p:
 🔥 <a href="…">Pioneer XDJ-RX3</a> — 95–110 тыс ₽ · 180/день (+40 сегодня) · 3 дн · выставлено 2 раза · DJ-оборудование
 <a href="…">Колонка JBL PartyBox 710</a> — 42 000 ₽ · 64/день (+9) · дата не проверена · 1 раз · Акустика · уже было 01.10
 
-<b>Итог проверки — 03.10</b>  (все находки, тот же формат) + «покрыто N дней из 7: Телефоны (2/7), …»
+<b>Итог проверки — 03.10</b>  (строка «Всего: найдено N, 🔥 M, подкатегорий K, загрузок L» + неотправленные находки) + «покрыто N дней из 7: Телефоны (2/7), …»
 + «ошибка: …» + «осталось 140 подкатегорий, пойдут первыми» / «⚠️ Avito ограничил доступ, продолжу по /report»
 ```
 
@@ -160,14 +160,16 @@ CHECK_SELLER_DATE=true    PAGE_DELAY_MIN=2    PAGE_DELAY_MAX=5
 
 | Ситуация | Поведение |
 |---|---|
-| Капча / «Доступ ограничен» / «Вы робот» | стоп сразу, алерт, итог, `status=blocked` → продолжение по `/report` в пределах 12 ч |
+| Капча / «Доступ ограничен» / «Вы робот» | алерт и ожидание человека до CAPTCHA_WAIT_MINUTES (ADR-005); не дождались или `/stop` → итог, `status=blocked`/`stopped` → продолжение по `/report` в пределах 12 ч. Слова ищем в title и начале видимого текста, не во всём HTML |
 | Ошибка подкатегории / карточки / профиля | пропуск + «ошибка» в итоге / пропуск карточки / «дата не проверена» |
 | 0 карточек, нет счётчика просмотров, нет даты в профиле | `_dump()` в `data/debug/` + warning (NFR-6) |
 | Перезапуск бота / выключение ПК | при старте `running → interrupted`; найденное уже в БД |
 | Профиль занят `app.auth` | браузер не стартует → `status=failed`, сообщение |
-| Telegram не принял порцию | `finds.sent` остаётся 0, находки всё равно попадут в итог |
+| Telegram не принял порцию | `finds.sent` остаётся 0, находки попадут в итог (итог шлёт только `sent=0`) |
+| Браузер не переоткрылся после уступки | `BrowserLost`: подкатегория = ошибка (предохранитель M4 считает её), карточки не проходят «пустыми» |
 
-Безопасность: команды режет существующий фильтр чата; текст из Avito экранируется `html.escape`; без прокси,
+Безопасность: команды режет существующий фильтр чата; текст из Avito экранируется `html.escape` (в том числе текст блока и названия разделов);
+ссылки только на `avito.ru` и поддомены (`is_avito_url`), чужие отбрасываются; без прокси,
 решателей капчи и подмены отпечатков (NFR-3); браузер только читает страницы.
 
 ## 10. Тесты (pytest, без живого Avito — NFR-7)
@@ -190,3 +192,14 @@ CHECK_SELLER_DATE=true    PAGE_DELAY_MIN=2    PAGE_DELAY_MAX=5
    первым шагом реализации — посмотреть 3–5 поднятых объявлений; если дата на карточке не меняется, выключить и сэкономить бюджет.
 3. **Фильтр цены прямо в адресе выдачи (`pmin=10000`).** Дешёвые объявления не занимают страницы, неделя покрывается
    глубже за тот же бюджет. Бот всё равно перепроверяет цену сам.
+
+## 12. Статус после ревью (ADR-005, ADR-006, ADR-007)
+
+- §11 «Решения, которые стоит подтвердить» закрыт: п.1-3 приняты (ADR-003/004), оценка NFR-2 уже 55-65 мин (m11).
+- `REPORT_SECTIONS` по умолчанию = 25 TOP-разделов в коде (`config.TOP_SECTIONS`), `.env` только переопределяет (m11).
+- Уступка браузера (M1), `loads` в `_before_load` (M2), счётчик ошибок подкатегорий / предохранитель (M4) реализованы;
+  M3 (`date_checked`) = `market_logic.date_checked`.
+- ADR-005: капчу проходит человек. ADR-006: карта категорий из `catalog.csv`, `prior_score`.
+- ADR-007: копии и цены по полной группе, `BrowserLost`, свежий бюджет на каждом `/report`, итог без повторов,
+  детектор блока по title/началу текста, wall-clock в `wait_unblocked`, `split_message`, allowlist `avito.ru`,
+  `html.escape` динамического текста, МСК-часы (`msk_now`), названия разделов (`SECTION_NAMES`).

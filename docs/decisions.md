@@ -44,3 +44,21 @@
 - Decision: (1) `parse_subcategories` falls back, when the rubricator gives nothing, to the `catalog.js` rule: any `<a>` whose path is `/<x>/<section>/<sub>`, not an item (`_\d{7,}`), text < 40 chars, normalized to `/rossiya/<section>/<sub>`. (2) `scripts/import_map.py` upserts `categories` from the read-only `avito_niche/catalog.csv` (url = BASE_URL + key, `discovered_at` = now, so discovery skips those sections for 30 days) and stores the CSV `score` as `categories.prior_score`. (3) `crawl_order`: never-crawled categories go first, in descending `prior_score`; crawled ones keep the days-since-crawl x best-vpd weight. Nothing is filtered out by CSV prices. (4) `init_db` adds the `prior_score` column to an existing SQLite DB with an idempotent `ALTER TABLE` (create_all does not alter tables).
 - Run: `PYTHONIOENCODING=utf-8 .venv/Scripts/python -m scripts.import_map [path]`.
 
+## ADR-007: Fix-pass after final review (2026-10-03)
+- Status: accepted (orchestrator; the user is asleep and delegated all decisions)
+- Context: final review (docs/code-review.md, docs/security-review.md, docs/test-report.md) found one HIGH, several MEDIUM and LOW items.
+- Decisions:
+  1. `Find.copies/price_min/price_max` come from the FULL group; `pick_groups`/`pick_cards` only choose which cards to open (max 2 per group, the 3rd copy stays unopened when both opened are low).
+  2. `BrowserLost` (providers/base.py) is raised when the browser cannot be reopened after a gate handover or is missing; `_open_card`/`_seller_date` re-raise it. A subcategory where every opened card failed raises an error, so it counts as an error for the breaker (no `last_crawled_at`).
+  3. Resume: each `/report` press starts with a fresh `REPORT_BUDGET`; `run.loads` stays a cumulative statistic (`MarketCrawler._add_loads`).
+  4. The final summary sends a totals line (found, hot, subcategories, loads) plus only the finds not yet sent in portions; no duplicates.
+  5. `is_blocked`: firewall markup anywhere in the HTML; the words «Доступ ограничен»/«Вы робот» only in `<title>` and the first 3000 chars of visible text.
+  6. `wait_unblocked`: wall-clock deadline (`loop.time()`), `tab.content()/title()` wrapped in `asyncio.wait_for(PROBE_TIMEOUT=15)`, `/stop` checked around every sleep.
+  7. `split_message`: flush the current chunk before cutting a long line, prefer `", "` then a space, never cut inside a tag or `&entity;`.
+  8. `html.escape` for dynamic text in Telegram (block alert, section names); `is_avito_url` allowlist (`avito.ru` + subdomains) for card, seller and subcategory links.
+  9. `scripts/save_fixtures.sanitize` masks review buyer names and texts; `market_seller*.html` re-sanitized in place.
+  10. LOW: batched `_lines`; `_finish` wrapped (the summary is sent even if the DB write fails); `CrawlRun.note` removed from the model (the column stays in old DBs); the progress message is sent once and not retried every minute on failure; Moscow time (`msk_now`, zoneinfo + tzdata on Windows) for relative dates and the crawler clock; «29 февраля» resolves to the previous leap year; `link_preview_options` instead of `disable_web_page_preview`.
+  11. Section display names: static `SECTION_NAMES` (25 slugs) in `market_logic`.
+  12. Docs: AC-5.1 refers to ADR-005, AC-5.3 states the captcha-wait exception, AC-2.4a/4.2/4.4 updated, tech-design cleaned up (section 12).
+- Not done: `BrowserGate.locked` kept (used by tests); `fetch` abstract change skipped (non-abstract default is harmless); thin wrappers in `market_logic` kept (testability).
+
