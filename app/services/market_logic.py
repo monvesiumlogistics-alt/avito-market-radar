@@ -567,6 +567,24 @@ FINAL_HEADERS = {
 }
 BAR_WIDTH = 22
 ETA_MIN_LOADS = 10  # раньше оценка скорости слишком шумная
+# Премиум-иконки набора t.me/addemoji/UnigramIcons: обычный эмодзи -> custom_emoji_id (PREMIUM_EMOJI=true).
+PREMIUM_ICONS = {
+    "🔎": "5870974879200711167",
+    "📂": "5870570722778156940",
+    "ℹ️": "5870609858520158157",
+    "⏩": "5870934523687997110",
+    "✅": "5870633910337015697",
+    "❗️": "5870931487146119264",
+    "⏲": "5870496192210669260",
+    "📖": "5870729937215819584",
+    "▶": "5870921127685001066",
+    "⚠️": "5872988737826197458",
+}
+
+
+def icon(emoji: str, premium: bool = False) -> str:
+    cid = PREMIUM_ICONS.get(emoji) if premium else None
+    return f'<tg-emoji emoji-id="{cid}">{emoji}</tg-emoji>' if cid else emoji
 
 
 def _mmss(seconds: float) -> str:
@@ -594,10 +612,18 @@ def format_progress(
     status: str | None = None,
     total: int | None = None,
     errors: int = 0,
+    premium: bool = False,
 ) -> str:
     """Одно живое сообщение: заголовок, что обходится, полоса с %, статистика построчно.
-    status=None — идёт (с «Осталось» и текущей категорией); иначе итоговый заголовок."""
+    status=None — идёт (с «Осталось» и текущей категорией); иначе итоговый заголовок.
+    premium — иконки UnigramIcons вместо обычных эмодзи (боту нужен username с Fragment)."""
+
+    def i(e: str) -> str:
+        return icon(e, premium)
+
     head = "🔎 Проверка рынка" if status is None else FINAL_HEADERS.get(status, "⏹ Остановлено")
+    lead, _, rest = head.partition(" ")
+    head = f"{i(lead)} {rest}"
     pct = min(100 * loads / budget, 100) if budget else 0
     left = "—"
     if status is None and loads >= ETA_MIN_LOADS and budget > loads:
@@ -605,17 +631,17 @@ def format_progress(
     speed = f"{loads / (elapsed / 60):.1f} стр/мин" if elapsed >= 30 and loads else "—"
     lines = [f"<b>{head}</b>", ""]
     if status is None and current:
-        lines.append(f"📂 {current}")
+        lines.append(f"{i('📂')} {current}")
     lines += [
         f"<code>{progress_bar(loads, budget)}  {pct:.1f}%</code>",
         "",
-        "<b>ℹ️ Обход…</b>" if status is None else "<b>ℹ️ Готово</b>",
-        f"⏩ Страниц: <code>{loads} / {budget}</code>",
-        f"✅ Найдено: <code>{finds}</code>" + (f" · 🔥 <code>{hot}</code>" if hot else ""),
-        f"❗️ Ошибок: <code>{errors}</code>",
-        f"⏲ Скорость: <code>{speed}</code>",
-        f"📖 Прошло: <code>{_mmss(elapsed)}</code> · Осталось: <code>{left}</code>",
-        f"▶ Подкатегорий: <code>{subcats}" + (f" / {total}" if total else "") + "</code>",
+        f"<b>{i('ℹ️')} {'Обход…' if status is None else 'Готово'}</b>",
+        f"{i('⏩')} Страниц: <code>{loads} / {budget}</code>",
+        f"{i('✅')} Найдено: <code>{finds}</code>" + (f" · 🔥 <code>{hot}</code>" if hot else ""),
+        f"{i('❗️')} Ошибок: <code>{errors}</code>",
+        f"{i('⏲')} Скорость: <code>{speed}</code>",
+        f"{i('📖')} Прошло: <code>{_mmss(elapsed)}</code> · Осталось: <code>{left}</code>",
+        f"{i('▶')} Подкатегорий: <code>{subcats}" + (f" / {total}" if total else "") + "</code>",
     ]
     return "\n".join(lines)
 

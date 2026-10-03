@@ -396,3 +396,11 @@ def test_margin_and_weight():
 
 def test_find_line_shows_id_when_known():
     assert format_card(find(id=123)).endswith(" · #123") and "#" not in format_card(find())
+
+
+def test_format_progress_premium_icons():
+    plain = format_progress(754, 228, 600, 31, 9, 4, "x")
+    assert "tg-emoji" not in plain
+    prem = format_progress(754, 228, 600, 31, 9, 4, "x", premium=True)
+    assert prem.startswith('<b><tg-emoji emoji-id="5870974879200711167">🔎</tg-emoji> Проверка рынка</b>')
+    assert prem.count("<tg-emoji") == 9 and "🔥 <code>4</code>" in prem  # 🔥 нет в наборе — обычный

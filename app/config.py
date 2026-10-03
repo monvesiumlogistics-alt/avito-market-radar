@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     # сколько ждать, пока человек пройдёт капчу в окне бота (нужен HEADLESS=false); 0 = не ждать
     captcha_wait_minutes: int = 15
     check_seller_date: bool = True
+    premium_emoji: bool = False  # иконки UnigramIcons (custom emoji) в прогрессе; без них — обычные эмодзи
     progress_edit_seconds: int = 20  # как часто правится сообщение о прогрессе; 0 = только после подкатегории
     recheck_max: int = 20  # сколько прошлых находок (2-14 дней) перепроверять в начале /report; 0 = выключено
     # маржа (/price): курс юаня и тарифы доставки Китай -> Москва, ₽ за кг

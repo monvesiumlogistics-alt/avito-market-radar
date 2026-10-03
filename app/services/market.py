@@ -289,7 +289,7 @@ class MarketCrawler:
         elapsed = (self.clock() - self._started).total_seconds() if self._started else 0
         return format_progress(
             elapsed, self.loads, self.settings.report_budget, subcats, finds, hot or 0, self._current, status,
-            total=len(cats), errors=len(self.errors),
+            total=len(cats), errors=len(self.errors), premium=self.settings.premium_emoji,
         )
 
     async def _tick(self) -> None:
