@@ -914,3 +914,12 @@ async def test_progress_ticker_edits_during_long_subcategory_and_skips_unchanged
     live = [x for _, x in t.notifier.edits if x.startswith("<b>⏳")]
     assert len(live) >= 3 and len(set(live)) == len(live)  # правки по таймеру, одинаковый текст не шлётся
     assert t.crawler._ticker is None
+
+
+async def test_query_category_url_keeps_q_and_adds_sort(tmp_path):
+    t = setup(tmp_path, {})
+    with t.sf() as db:
+        db.get(Category, t.cat_id).url = f"{CAT_URL}?q=prada"
+        db.commit()
+    await t.crawler.crawl_subcategory(t.cat_id)
+    assert t.provider.calls[0] == f"{CAT_URL}?q=prada&s=104&pmin=10000"

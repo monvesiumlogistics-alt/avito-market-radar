@@ -597,7 +597,8 @@ class MarketCrawler:
         last_age: timedelta | None = None
         full = False
         for page in range(1, s.report_max_pages + 1):
-            res = await self._fetch(with_page(f"{url}?s=104&pmin={s.min_price}", page), SELECTORS["card"][0])
+            sep = "&" if "?" in url else "?"  # подкатегория может быть поиском по слову: .../muzhskaya_odezhda?q=prada
+            res = await self._fetch(with_page(f"{url}{sep}s=104&pmin={s.min_price}", page), SELECTORS["card"][0])
             cards = parse_search_html(res.html, name, now)
             if not cards:
                 log.warning("[MARKET] 0 карточек: %s стр. %d", url, page)
