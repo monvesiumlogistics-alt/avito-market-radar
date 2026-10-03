@@ -1,9 +1,11 @@
 """Чистая логика проверки рынка: возраст, группы, отбор карточек, фильтры, порядок обхода. Без I/O."""
 
 import html
+import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from itertools import groupby
+from urllib.parse import quote_plus
 
 from app.config import Settings
 from app.db import Category, Find
@@ -144,6 +146,31 @@ def sort_finds(finds: Sequence, seen: Mapping[str, datetime]) -> list:
     return sorted(finds, key=lambda f: (not f.hot, f.group_key in seen, -f.vpd))
 
 
+GOOFISH_STOP = {"new", "original", "orig", "size", "cm", "mm", "kg", "set", "lot"}  # pro/max/mini — части моделей
+GOOFISH_MAX_TOKENS = 4
+_LATIN_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9.\-]*")
+
+
+def goofish_query(title: str) -> str | None:
+    """Латинские токены названия (бренд + модель) для поиска на goofish; None, если модели в названии нет."""
+    tokens = []
+    for raw in title.split():
+        t = raw.strip(".,;:!?()[]{}\"'«»-")
+        if (
+            len(t) >= 2
+            and _LATIN_TOKEN.fullmatch(t)
+            and re.search(r"[A-Za-z]", t)
+            and t.lower() not in GOOFISH_STOP
+        ):
+            tokens.append(t)
+    return " ".join(tokens[:GOOFISH_MAX_TOKENS]) or None
+
+
+def goofish_url(title: str) -> str | None:
+    q = goofish_query(title)
+    return f"https://www.goofish.com/search?q={quote_plus(q)}" if q else None
+
+
 def _rub(n: int) -> str:
     return f"{n:,}".replace(",", " ")
 
@@ -160,6 +187,8 @@ def format_find(f: Find, category: str, seen_on: datetime | None = None) -> str:
     parts = [price, views, age, f"выставлено {f.copies} {_times(f.copies)}", html.escape(category)]
     if seen_on:
         parts.append(f"уже было {seen_on:%d.%m}")
+    if goofish := goofish_url(f.title):
+        parts.append(f'<a href="{html.escape(goofish)}">🔎 goofish</a>')
     link = f'<a href="{html.escape(f.url)}">{html.escape(f.title[:TITLE_CAP])}</a>'
     return f"{'🔥 ' if f.hot else ''}{link} — " + " · ".join(parts)
 

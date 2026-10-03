@@ -129,13 +129,14 @@ def test_format_find_fields():
     assert line == (
         '🔥 <a href="https://www.avito.ru/x_1">Pioneer XDJ-RX3</a> — 95 000–110 000 ₽ · 180/день (+40 сегодня)'
         " · 3 дн · выставлено 2 раза · DJ-оборудование"
+        ' · <a href="https://www.goofish.com/search?q=Pioneer+XDJ-RX3">🔎 goofish</a>'
     )
     line = format_find(
         find(price_max=95000, today=None, date_checked=False, copies=1, hot=False), "Акустика", datetime(2026, 10, 1)
     )
     assert line.startswith("<a ") and " — 95 000 ₽ · 180/день · " in line
     assert "(+" not in line and "дата не проверена" in line and "выставлено 1 раз ·" in line
-    assert line.endswith("Акустика · уже было 01.10")
+    assert "Акустика · уже было 01.10 · <a " in line and line.endswith("🔎 goofish</a>")
 
 
 def test_format_find_plural_and_min_age():
@@ -189,3 +190,22 @@ def test_crawl_order_never_crawled_by_prior_score():
         cat(5, "C", 40),  # уже обходили: после всех необойдённых
     ]
     assert [c.id for c in crawl_order(cats, run_id=1, now=NOW)] == [2, 1, 3, 4, 5]
+
+
+def test_goofish_query():
+    from app.services.market_logic import goofish_query, goofish_url
+
+    assert goofish_query("Bugaboo Dragonfly 2в1 Desert Taupe") == "Bugaboo Dragonfly Desert Taupe"
+    assert "Bugaboo Dragonfly" in goofish_query("Bugaboo Dragonfly 2в1 Desert Taupe")
+    assert goofish_query("Коляска детская") is None
+    assert goofish_query("Pioneer DDJ-400 новый") == "Pioneer DDJ-400"
+    assert goofish_query("New Original Pioneer, set 5 kg cm") == "Pioneer"
+    assert goofish_query("Apple iPhone 15 Pro Max 256 Гб black") == "Apple iPhone Pro Max"
+    assert goofish_query("12345 Куртка") is None  # цифры без латинской буквы — не модель
+    assert goofish_url("Pioneer DDJ-400") == "https://www.goofish.com/search?q=Pioneer+DDJ-400"
+    assert goofish_url("Коляска") is None
+
+
+def test_format_find_goofish_link_only_with_model():
+    assert 'href="https://www.goofish.com/search?q=Sony+A7">🔎 goofish</a>' in format_find(find(title="Sony A7"), "c")
+    assert "goofish" not in format_find(find(title="Коляска детская"), "c")
