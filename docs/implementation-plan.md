@@ -82,7 +82,7 @@ real deps: I3←I1 · I5←I4 · I7←I6 · I9←I2,I3,I4,I7 · I9b←I2,I3,I9 �
 
 ## Iteration 8: Notifier additions  (S)
 **Modify**: `app/services/notifier.py` (`send_text -> int|None`, `disable_web_page_preview=True`; `edit_text` swallows «message is not modified», no text cache; notifier sends ONE chunk and never imports `market_logic` — N4), `tests/test_notifier.py` (new, fake bot).
-**Done**: [ ] preview disabled [ ] «not modified» swallowed [ ] other errors logged, not raised [ ] gate.
+**Done**: [x] preview disabled [x] «not modified» swallowed [x] other errors logged, not raised [x] gate.
 **Depends**: none · **Risk**: low.
 
 ## Iteration 9: crawl_subcategory + crawler skeleton  (M–L)

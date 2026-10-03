@@ -1,7 +1,9 @@
 import html
 import logging
+from datetime import time
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.db import ListingRow
@@ -24,7 +26,8 @@ def format_listing(row: ListingRow, rule_name: str) -> str:
     if row.seller_name:
         lines.append(f"🛍 {html.escape(row.seller_name[:60])}")
     if row.published_at:
-        lines += ["", f"Опубликовано: ~{row.published_at:%d.%m %H:%M}"]
+        fmt = "%d.%m" if row.published_at.time() == time() else "%d.%m %H:%M"  # 00:00 = в выдаче был только день
+        lines += ["", f"Опубликовано: ~{row.published_at:{fmt}}"]
     return "\n".join(lines)
 
 
@@ -51,8 +54,22 @@ class TelegramNotifier:
             log.exception("[NOTIFY] telegram failed avito_id=%s, повторю на следующем скане", row.external_id)
             return False
 
-    async def send_text(self, text: str) -> None:
+    async def send_text(self, text: str) -> int | None:
+        """Одно сообщение (не режет длинный текст — это делает вызывающий). Возвращает id или None при ошибке."""
         try:
-            await self.bot.send_message(self.chat_id, text)
+            msg = await self.bot.send_message(self.chat_id, text, disable_web_page_preview=True)
+            return msg.message_id
         except Exception:
             log.exception("[NOTIFY] не удалось отправить служебное сообщение")
+            return None
+
+    async def edit_text(self, message_id: int, text: str) -> None:
+        try:
+            await self.bot.edit_message_text(
+                text, chat_id=self.chat_id, message_id=message_id, disable_web_page_preview=True
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e):
+                log.exception("[NOTIFY] не удалось изменить сообщение")
+        except Exception:
+            log.exception("[NOTIFY] не удалось изменить сообщение")
