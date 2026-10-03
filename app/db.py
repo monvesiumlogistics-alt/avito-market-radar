@@ -69,6 +69,15 @@ class Category(Base):
     last_days_covered: Mapped[float | None]
     prior_score: Mapped[float | None]  # стартовый приоритет из карты (catalog.csv), пока не обходили
     skipped: Mapped[bool] = mapped_column(default=False)  # /skip: категорию не обходим
+    # срез рынка по последнему обходу (ADR-014)
+    last_fresh_count: Mapped[int | None]
+    last_price_median: Mapped[int | None]
+    last_opened: Mapped[int | None]
+    last_vpd_min: Mapped[int | None]
+    last_vpd_median: Mapped[int | None]
+    last_vpd_max: Mapped[int | None]
+    last_best_url: Mapped[str | None] = mapped_column(String(1000))
+    last_best_title: Mapped[str | None] = mapped_column(String(200))
 
 
 class CrawlRun(Base):
@@ -118,6 +127,14 @@ _ADDED_COLUMNS = (  # (таблица, колонка, тип) — конста�
     ("categories", "prior_score", "FLOAT"),
     ("categories", "skipped", "BOOLEAN NOT NULL DEFAULT 0"),
     ("finds", "feedback", "INTEGER NOT NULL DEFAULT 0"),
+    ("categories", "last_fresh_count", "INTEGER"),
+    ("categories", "last_price_median", "INTEGER"),
+    ("categories", "last_opened", "INTEGER"),
+    ("categories", "last_vpd_min", "INTEGER"),
+    ("categories", "last_vpd_median", "INTEGER"),
+    ("categories", "last_vpd_max", "INTEGER"),
+    ("categories", "last_best_url", "VARCHAR(1000)"),
+    ("categories", "last_best_title", "VARCHAR(200)"),
     ("finds", "gone_at", "DATETIME"),
     ("finds", "last_checked_at", "DATETIME"),
     ("finds", "views_last", "INTEGER"),

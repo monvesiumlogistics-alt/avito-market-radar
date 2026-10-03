@@ -14,6 +14,7 @@ from app.providers.avito_parser import msk_now
 from app.services.market import MarketCrawler
 from app.services.market_cmds import cats_text, export_csv, set_feedback, set_price, set_skipped, top_messages
 from app.services.notifier import NO_PREVIEW, format_price
+from app.services.panels import start_text, status_header, status_next, status_rule
 from app.services.scanner import Scanner
 
 
@@ -42,14 +43,7 @@ def build_router(
     @router.message(Command("start"))
     async def start(msg: Message) -> None:
         await msg.answer(
-            "<b>AvitoHunter</b>: мониторинг новых объявлений Avito.\n\n"
-            "/status: состояние\n/watchlist: правила\n/check: проверить сейчас\n"
-            "/last: последние найденные\n/pause, /resume: пауза мониторинга\n\n"
-            "<b>Что выложить</b>: проверка рынка, час-полтора\n"
-            "/report: запустить или продолжить, /stop: остановить\n"
-            "/top [дней]: лучшие находки из базы, /export: все находки файлом CSV\n"
-            "/price номер юани: маржа находки\n"
-            "/cats: разделы, /skip текст, /unskip текст: выключить или вернуть категории",
+            start_text(settings.premium_emoji),
             reply_markup=KEYBOARD,
         )
 
@@ -89,12 +83,12 @@ def build_router(
             return
         with session_factory() as db:
             res = set_price(db, int(parts[0]), int(parts[1]), settings)
-        await msg.answer(f"Находка #{parts[0]}: " + res if res else f"Находка #{html.escape(parts[0])} не найдена")
+        await msg.answer(res or f"Находка #{html.escape(parts[0])} не найдена")
 
     @router.message(Command("cats"))
     async def cats(msg: Message) -> None:
         with session_factory() as db:
-            chunks = cats_text(db)
+            chunks = cats_text(db, settings.premium_emoji)
         for chunk in chunks:
             await msg.answer(chunk)
 
@@ -125,7 +119,8 @@ def build_router(
     async def status(msg: Message) -> None:
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         job = scheduler.get_job("scan")
-        lines = ["AvitoHunter работает ✅" if not scanner.blocked else "⚠️ Avito ограничил доступ", ""]
+        pr = settings.premium_emoji
+        lines = [status_header(scanner.blocked, pr), ""]
         with session_factory() as db:
             for rule in db.scalars(select(WatchRule)).all():
                 found = db.scalar(select(func.count()).where(ListingRow.rule_id == rule.id, ListingRow.matched))
@@ -137,18 +132,11 @@ def build_router(
                     )
                 )
                 state = "DISABLED" if not rule.enabled else "PAUSED" if scanner.paused else "ACTIVE"
-                lines += [
-                    f"<b>{html.escape(rule.name)}</b>",
-                    f"Статус: {state}",
-                    f"Последняя проверка: {_hm(rule.last_checked_at)}",
-                    f"Найдено объявлений: {found}",
-                    f"Новых сегодня: {new_today}",
-                    "",
-                ]
-                if not rule.search_urls:
-                    lines.insert(-1, "⚠️ Нет AVITO_SEARCH_URLS в .env")
+                lines += status_rule(
+                    rule.name, state, _hm(rule.last_checked_at), found, new_today, not rule.search_urls, pr
+                )
         if job and job.next_run_time and not scanner.paused:
-            lines.append(f"Следующая проверка: ~{job.next_run_time:%H:%M}")
+            lines.append(status_next(job.next_run_time, pr))
         await msg.answer("\n".join(lines))
 
     @router.message(Command("watchlist"))

@@ -147,3 +147,4 @@ AVITO_SEARCH_URLS=Мужское|https://www.avito.ru/...;Женское|https:/
 Структура: `providers/` (откуда объявления; новый источник = новый класс `AvitoProvider`),
 `services/matcher.py` (фильтр), `services/scanner.py` (цикл: fetch → match → dedupe → notify),
 `services/notifier.py` (Telegram), `telegram/handlers.py` (команды), `db.py` (SQLite/SQLAlchemy 2).
+- В итоге блок «📈 Рынок по подкатегориям»: по каждой обойдённой подкатегории — сколько свежих объявлений за сколько дней покрыто, медианная цена, разброс просмотров в день и ссылка на лучшее; «⚠️ Не вся неделя» значит, что лимит страниц (`REPORT_MAX_PAGES`) кончился раньше, чем выдача дошла до объявлений недельной давности

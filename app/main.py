@@ -1,5 +1,4 @@
 import asyncio
-import html
 import logging
 import sys
 from datetime import datetime, timedelta
@@ -15,6 +14,7 @@ from app.providers.avito_browser import AvitoBrowserProvider
 from app.providers.base import BrowserGate
 from app.services.market import MarketCrawler
 from app.services.notifier import TelegramNotifier
+from app.services.panels import startup_text
 from app.services.scanner import Scanner
 from app.telegram.handlers import build_router
 
@@ -67,6 +67,7 @@ async def main() -> None:
         initial_scan_notify=settings.initial_scan_notify,
         max_pages=settings.max_pages,
         gate=gate,
+        premium=settings.premium_emoji,
     )
     delay = (settings.page_delay_min, settings.page_delay_max)
     crawler = MarketCrawler(
@@ -85,8 +86,7 @@ async def main() -> None:
     dp.include_router(build_router(settings.telegram_admin_chat_id, scanner, session_factory, scheduler, crawler))
     log.info("AvitoHunter запущен, интервал %d мин", settings.check_interval_minutes)
     every = settings.check_interval_minutes
-    monitor = f"\nМониторинг «{html.escape(rule.name)}»: каждые {every} мин." if rule.enabled else ""
-    await notifier.send_text(f"AvitoHunter запущен ✅ Жми «🔎 Проверить рынок» или /report.{monitor}")
+    await notifier.send_text(startup_text(rule.name, every, rule.enabled, settings.premium_emoji))
     try:
         await dp.start_polling(bot)
     finally:

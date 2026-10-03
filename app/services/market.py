@@ -36,17 +36,23 @@ from app.services.market_logic import (
     crawl_order,
     current_label,
     date_checked,
+    dedupe_finds,
     find_age,
     format_progress,
     format_results,
     group_cards,
+    icon,
     is_find,
     is_hot,
+    market_lines,
+    market_stats,
     model_groups,
     norm_title,
     pick_groups,
+    stats_lines,
     summary_tail,
 )
+from app.services.panels import captcha_alert, captcha_passed
 
 log = logging.getLogger(__name__)
 
@@ -372,7 +378,7 @@ class MarketCrawler:
         """Итог (формат D): все находки прогона (и 🔥 тоже) по разделам + ушедшие при перепроверке (ADR-013)."""
         s = self.settings
         with self.session_factory() as db:
-            finds = list(db.scalars(select(Find).where(Find.run_id == self.run_id)))
+            finds = dedupe_finds(db.scalars(select(Find).where(Find.run_id == self.run_id)))
             gone = list(db.scalars(select(Find).where(Find.id.in_(self.gone_ids)))) if self.gone_ids else []
             cats = self._categories(db)
             done = [c for c in cats if c.last_run_id == self.run_id]
@@ -383,17 +389,24 @@ class MarketCrawler:
                 if c.last_days_covered < s.report_max_age_days
             ]
             remaining = len(cats) - len(done)
-            shown = finds + [g for g in gone if g.id not in {f.id for f in finds}]
+            shown = dedupe_finds(finds + gone)
+            pr = s.premium_emoji
             entries = self._entries(db, shown)
-            stats = f"🎯 {len(finds)} находок · 🔥 {sum(bool(f.hot) for f in finds)} · 📂 {len(done)} подкатегорий"
-            notes = [n for n in (STATUS_NOTES.get(status), f"✅ ушло: {len(gone)}" if gone else None) if n]
+            stats = stats_lines(len(finds), sum(bool(f.hot) for f in finds), len(done), len(gone), pr)
+            notes = [STATUS_NOTES[status]] if status in STATUS_NOTES else []
+            crawled = [c for c in done if c.last_status == "ok" and c.last_fresh_count is not None]
             texts = format_results(
-                f"<b>📊 Проверка рынка · {self.clock():%d.%m}</b>",
+                f"<b>{icon('📊', pr)} Проверка рынка · {self.clock():%d.%m}</b>",
                 stats,
                 entries,
                 model_groups(shown),
                 notes,
-                summary_tail(covered, self.errors, remaining if status != "done" else 0, s.report_max_age_days),
+                summary_tail(
+                    covered, self.errors, remaining if status != "done" else 0, s.report_max_age_days,
+                    s.report_max_pages, pr,
+                ),
+                market=market_lines(crawled, pr),
+                premium=pr,
             )
         await self._send_many(texts)
 
@@ -464,9 +477,7 @@ class MarketCrawler:
         log.error("[MARKET] блок: %s", reason)
         if self.settings.headless or minutes <= 0:
             return False
-        await self.notifier.send_text(
-            f"🧩 Avito просит проверку — пройди её в окне браузера бота (жду до {minutes} мин)"
-        )
+        await self.notifier.send_text(captcha_alert(minutes, self.settings.premium_emoji))
         before, self._current = self._current, "🧩 жду проверку капчи"
         await self._send_progress(force=True)
         try:
@@ -478,7 +489,7 @@ class MarketCrawler:
         if self.stop_requested:
             raise StopRequested
         if passed:
-            await self.notifier.send_text("✅ Проверка пройдена, продолжаю")
+            await self.notifier.send_text(captcha_passed(self.settings.premium_emoji))
         return passed
 
     # --- перепроверка прошлых находок («ушло за N дней») ---
@@ -578,7 +589,7 @@ class MarketCrawler:
             self._current = current_label(cat.section, name)
         try:
             cards, covered = await self._collect(url, name)
-            finds, best_vpd = await self._evaluate(cat_id, cards)
+            finds, best_vpd, opened = await self._evaluate(cat_id, cards)
         except (StopRequested, BudgetExhausted, ProviderBlocked):
             self._save(None)
             raise
@@ -587,8 +598,10 @@ class MarketCrawler:
             self.errors.append(f"{name}: {type(e).__name__}: {e}")
             self._save(cat_id, error=True)
             return False
-        self._save(cat_id, finds=finds, best_vpd=best_vpd, covered=covered)
-        await self._send_hot(finds)
+        added = self._save(
+            cat_id, finds=finds, best_vpd=best_vpd, covered=covered, stats=market_stats(cards, opened)
+        )
+        await self._send_hot(added)
         return True
 
     async def _collect(self, url: str, name: str) -> tuple[list[Listing], float]:
@@ -623,9 +636,10 @@ class MarketCrawler:
         covered = float(s.report_max_age_days) if full else (last_age.total_seconds() / 86400 if last_age else 0.0)
         return list(found.values()), covered
 
-    async def _evaluate(self, cat_id: int, cards: list[Listing]) -> tuple[list[Find], int]:
+    async def _evaluate(self, cat_id: int, cards: list[Listing]) -> tuple[list[Find], int, list[Opened]]:
         s, now = self.settings, self.clock()
         finds: list[Find] = []
+        all_opened: list[Opened] = []  # для среза рынка: все открытые страницы, в том числе ниже порога
         opened_pages = 0
         card_errors = 0
         for group, full in pick_groups(group_cards(cards)):
@@ -644,6 +658,7 @@ class MarketCrawler:
                     break
                 if res:
                     opened.append(res)
+                    all_opened.append(res)
                     if res.vpd >= s.vpd_min:
                         break  # вторая копия открывается только если первая не дала порог (AC-2.4a)
             if dropped or not opened:
@@ -682,7 +697,7 @@ class MarketCrawler:
             )
         if opened_pages and card_errors == opened_pages:  # все открытые карточки упали: сбой, а не «пусто»
             raise RuntimeError(f"не открылась ни одна из {opened_pages} карточек")
-        return finds, max((f.vpd for f in finds), default=0)
+        return finds, max((f.vpd for f in finds), default=0), all_opened
 
     async def _open_card(self, card: Listing) -> Opened | str | None:
         """Opened; 'old' — дата на странице старше недели; 'error' — не открылась; None — пропущена (нет счётчика)."""
@@ -727,8 +742,11 @@ class MarketCrawler:
         error: bool = False,
         best_vpd: int = 0,
         covered: float | None = None,
-    ) -> None:
-        """Один коммит: находки + категория + run.loads (m8). cat_id=None — только счётчик загрузок."""
+        stats: dict | None = None,
+    ) -> list[Find]:
+        """Один коммит: находки + категория + run.loads (m8). cat_id=None — только счётчик загрузок.
+        Возвращает реально добавленные находки (то же объявление в этом прогоне второй раз не пишем)."""
+        added: list[Find] = []
         with self.session_factory() as db:
             run = db.get(CrawlRun, self.run_id)
             self._add_loads(run)
@@ -740,8 +758,16 @@ class MarketCrawler:
                 else:
                     cat.last_status, cat.last_crawled_at = "ok", self.clock()
                     cat.last_best_vpd, cat.last_days_covered = best_vpd, covered
+                    have = set(db.scalars(select(Find.external_id).where(Find.run_id == run.id)))
                     for f in finds:
+                        if f.external_id in have:
+                            continue
+                        have.add(f.external_id)
                         f.run_id = run.id
-                    db.add_all(finds)
-                    run.finds_count += len(finds)
+                        added.append(f)
+                    db.add_all(added)
+                    run.finds_count += len(added)
+                    for key, value in (stats or {}).items():
+                        setattr(cat, key, value)
             db.commit()
+        return added

@@ -122,7 +122,9 @@ def find(**kw):
 def test_format_card_fields():
     lines = format_card(find(views=540, page_date=datetime(2026, 10, 1))).split("\n")
     assert lines[0] == '🔥 <a href="https://www.avito.ru/x_1">Pioneer XDJ-RX3</a> ×2'
-    assert lines[1] == "💰 95 000–110 000 ₽ · 👁 180/день (+40 сегодня, всего 540) · 📅 01.10 (3 дн)"
+    assert lines[1] == (
+        "💵 <code>95 000–110 000 ₽</code> · 👁 <code>180/день (+40 сегодня, всего 540)</code> · 🗓 01.10 (3 дн)"
+    )
     assert lines[2] == (
         "💡 очень высокий спрос: 180 просм/день; выставлено 2 раза — товар ходовой;"
         " есть бренд/модель — легко найти на goofish"
@@ -136,9 +138,10 @@ def test_format_card_fields():
         margin="маржа ~1 ₽",
     ).split("\n")
     assert card[0].startswith("<a ") and "×" not in card[0]
-    assert card[1] == "💰 95 000 ₽ · 👁 180/день · 📅 29.09 (дата не проверена) · уже было 01.10"
+    price_part = "💵 <code>95 000 ₽</code> · 👁 <code>180/день</code>"
+    assert card[1] == f"{price_part} · 🗓 29.09 (дата не проверена) · уже было 01.10"
     assert card[3] == "💱 маржа ~1 ₽" and card[4].endswith("🔎 goofish</a> · #7")
-    assert format_card(find(date_checked=False)).split("\n")[1].endswith("📅 дата не проверена")  # даты нет совсем
+    assert format_card(find(date_checked=False)).split("\n")[1].endswith("🗓 дата не проверена")  # даты нет совсем
     assert " ~1 дн" in format_card(find(age_days=0.4))
 
 
@@ -283,8 +286,8 @@ def test_format_progress_bar_eta_and_states():
 def test_summary_tail_covered_days_remaining_and_error_cap():
     errors = [f"<boom {i}>" for i in range(13)]
     tail = summary_tail([("Телефоны", 2.0), ("Ноутбуки", 3.46)], errors, 140, 7)
-    assert tail[0] == "Покрыто не полностью: Телефоны — 2 из 7 дн, Ноутбуки — 3.5 из 7 дн"
-    assert sum(1 for x in tail if x.startswith("ошибка:")) == 10 and "и ещё 3" in tail
+    assert tail[0] == "⚠️ Не вся неделя (лимит 5 стр.): Телефоны — 2 дн из 7, Ноутбуки — 3.5 дн из 7"
+    assert sum(1 for x in tail if "ошибка:" in x) == 10 and "и ещё 3" in tail
     assert "&lt;boom 0&gt;" in "\n".join(tail) and "<boom" not in "\n".join(tail)
     assert tail[-1] == "Осталось 140 подкатегорий, пойдут первыми в следующий раз."
     assert summary_tail([], [], 0, 7) == []

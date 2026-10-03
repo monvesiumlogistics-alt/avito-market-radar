@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import html
 import logging
 import time
 from collections.abc import Callable
@@ -14,6 +13,7 @@ from app.db import ListingRow, WatchRule
 from app.models import Listing, SearchUrl
 from app.providers.base import AvitoProvider, BrowserGate, ProviderBlocked
 from app.services.matcher import matches
+from app.services.panels import block_alert, block_restored
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ class Scanner:
         retry_delays: tuple[float, ...] = (5, 20),
         send_delay: float = 1.0,
         gate: BrowserGate | None = None,
+        premium: bool = False,
     ):
         self.session_factory = session_factory
         self.provider_factory = provider_factory
@@ -48,6 +49,7 @@ class Scanner:
         self.retry_delays = retry_delays
         self.send_delay = send_delay
         self.gate = gate
+        self.premium = premium  # иконки UnigramIcons в алертах
         self.paused = False  # ponytail: пауза в памяти, после рестарта мониторинг снова идёт
         self.blocked = False
         self.last_run_at: datetime | None = None
@@ -89,11 +91,7 @@ class Scanner:
             except ProviderBlocked as e:
                 log.error("[BLOCKED] %s", e)
                 if not self.blocked:
-                    await self.notifier.send_text(
-                        f"⚠️ Avito ограничил доступ: «{html.escape(str(e))}».\n"
-                        "Мониторинг продолжит попытки по расписанию. Если не пройдёт: останови бота, "
-                        "запусти python -m app.auth, пройди проверку/войди вручную и запусти снова."
-                    )
+                    await self.notifier.send_text(block_alert(e, self.premium))
                 self.blocked = True
                 report.append(f"⚠️ Avito: {e}")
             except Exception as e:  # например, профиль браузера занят запущенным app.auth
@@ -101,7 +99,7 @@ class Scanner:
                 report.append(f"ошибка браузера: {type(e).__name__}: {e}")
             else:
                 if self.blocked:
-                    await self.notifier.send_text("✅ Доступ к Avito восстановлен")
+                    await self.notifier.send_text(block_restored(self.premium))
                 self.blocked = False
             self.last_run_at = datetime.now()
             return report

@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import groupby
+from statistics import median
 from typing import NamedTuple
 from urllib.parse import quote_plus
 
@@ -374,6 +375,7 @@ def format_card(
     min_price: int = 10000,
     model_count: int = 1,
     margin: str | None = None,
+    premium: bool = False,
 ) -> str:
     """Карточка находки, 3-5 строк (резать можно только между карточками, см. split_message)."""
     title = html.escape(f.title[:SHORT_TITLE]) + ("…" if len(f.title) > SHORT_TITLE else "")
@@ -393,15 +395,18 @@ def format_card(
     when = f"{day:%d.%m} ({age})" if day else f"~{age}"
     if not f.date_checked:
         when = f"{day:%d.%m} (дата не проверена)" if day else "дата не проверена"
-    info = f"💰 {price} · 👁 {views} · 📅 {when}"
+    info = (
+        f"{icon('💵', premium)} <code>{price}</code> · {icon('👁', premium)} <code>{views}</code>"
+        f" · {icon('🗓', premium)} {when}"
+    )
     if seen_on:
         info += f" · уже было {seen_on:%d.%m}"
-    lines = [head, info, "💡 " + reason(f, vpd_hot, min_price, model_count)]
+    lines = [head, info, f"{icon('💡', premium)} " + reason(f, vpd_hot, min_price, model_count)]
     if margin:
         lines.append("💱 " + margin)
     tail = []
     if goofish := goofish_url(f.title):
-        tail.append(f'<a href="{html.escape(goofish)}">🔎 goofish</a>')
+        tail.append(f'<a href="{html.escape(goofish)}">{icon("🔎", premium)} goofish</a>')
     if (find_id := getattr(f, "id", None)) is not None:
         tail.append(f"#{find_id}")  # для /price <id> <юани>
     if tail:
@@ -430,7 +435,7 @@ def short_title(title: str, cap: int = SHORT_LINE_TITLE) -> str:
     return html.escape(title[:cap]) + ("…" if len(title) > cap else "")
 
 
-def format_line(f, seen: bool = False, margin: str | None = None) -> str:
+def format_line(f, seen: bool = False, margin: str | None = None, premium: bool = False) -> str:
     """Строка находки в итоге (формат D): 🔥 название ×N · цена · vpd/д · ушло · уже было · 🔎 · #id."""
     head = f"{'🔥 ' if f.hot else ''}<a href=\"{html.escape(f.url)}\">{short_title(f.title)}</a>"
     if f.copies > 1:
@@ -438,16 +443,80 @@ def format_line(f, seen: bool = False, margin: str | None = None) -> str:
     price = f"{_rub(f.price_min)} ₽" if f.price_min == f.price_max else f"{_rub(f.price_min)}–{_rub(f.price_max)} ₽"
     parts = [head, price, f"{f.vpd}/д"]
     if gone := gone_days(f):
-        parts.append(f"✅ ушло за {gone} дн")
+        parts.append(f"{icon('✅', premium)} ушло за {gone} дн")
     if seen:
         parts.append("уже было")
     if margin:
         parts.append(margin)
     if goofish := goofish_url(f.title):
-        parts.append(f'<a href="{html.escape(goofish)}">🔎</a>')
+        parts.append(f'<a href="{html.escape(goofish)}">{icon("🔎", premium)}</a>')
     if (find_id := getattr(f, "id", None)) is not None:
         parts.append(f"#{find_id}")
     return " · ".join(parts)
+
+
+def dedupe_finds(finds: Sequence) -> list:
+    """Одно объявление (external_id), найденное через две категории-запроса, — одна находка с лучшим vpd."""
+    best: dict[str, object] = {}
+    for f in finds:
+        key = getattr(f, "external_id", None) or id(f)
+        if key not in best or f.vpd > best[key].vpd:
+            best[key] = f
+    return list(best.values())
+
+
+def market_stats(cards: Sequence, opened: Sequence) -> dict:
+    """Срез рынка по подкатегории: свежие карточки (не промо, не старше недели, от MIN_PRICE) и открытые страницы.
+    opened: объекты с .vpd и .card (url, title)."""
+    prices = [c.price for c in cards if c.price]
+    vpds = [o.vpd for o in opened]
+    best = max(opened, key=lambda o: o.vpd, default=None)
+    return {
+        "last_fresh_count": len(cards),
+        "last_price_median": round(median(prices)) if prices else None,
+        "last_opened": len(opened),
+        "last_vpd_min": min(vpds, default=None),
+        "last_vpd_median": round(median(vpds)) if vpds else None,
+        "last_vpd_max": max(vpds, default=None),
+        "last_best_url": best.card.url if best else None,
+        "last_best_title": best.card.title[:200] if best else None,
+    }
+
+
+def market_line(c, premium: bool = False) -> str:
+    """Строка среза рынка: «Аккордеоны — 250 свежих за 1.7 дн · ~45 000 ₽ · 👁 8–41/д (медиана 15) · лучшее»."""
+    name = html.escape(c.name)
+    if not c.last_fresh_count:
+        return f"{name} — пусто"
+    days = f"{round(c.last_days_covered or 0, 1):g}"
+    parts = [f"{name} — <code>{c.last_fresh_count}</code> свежих за <code>{days}</code> дн"]
+    if c.last_price_median:
+        parts.append(f"~<code>{_rub(c.last_price_median)}</code> ₽")
+    if c.last_opened and c.last_vpd_max is not None:
+        lo, hi = c.last_vpd_min, c.last_vpd_max
+        rng = f"{hi}" if lo == hi else f"{lo}–{hi}"
+        parts.append(f"{icon('👁', premium)} <code>{rng}</code>/д (медиана <code>{c.last_vpd_median}</code>)")
+    else:
+        parts.append("страницы не открывали")
+    if c.last_best_url:
+        parts.append(f'<a href="{html.escape(c.last_best_url)}">лучшее</a>')
+    return " · ".join(parts)
+
+
+def market_lines(cats: Sequence, premium: bool = False) -> list[str]:
+    """Все обойденные подкатегории по убыванию максимального vpd (пустые и без открытых — в конце)."""
+    ordered = sorted(cats, key=lambda c: -(c.last_vpd_max if c.last_vpd_max is not None else -1))
+    return [market_line(c, premium) for c in ordered]
+
+
+def stats_lines(found: int, hot: int, subcats: int | None = None, gone: int = 0, premium: bool = False) -> str:
+    """Строки счётчиков в стиле панели прогресса (подписи обычным текстом, числа в <code>)."""
+    lines = [f"{icon('✅', premium)} Найдено: <code>{found}</code>" + (f" · 🔥 <code>{hot}</code>" if hot else "")]
+    if subcats is not None:
+        lines.append(f"{icon('📂', premium)} Подкатегорий: <code>{subcats}</code>")
+    if gone:
+        lines.append(f"{icon('✅', premium)} Ушло: <code>{gone}</code>")
+    return "\n".join(lines)
 
 
 def group_sections(entries: Sequence[Entry]) -> list[tuple[str, list[Entry]]]:
@@ -518,6 +587,8 @@ def format_results(
     notes: Sequence[str] = (),
     tail: Sequence[str] = (),
     limit: int = TG_LIMIT,
+    market: Sequence[str] = (),
+    premium: bool = False,
 ) -> list[str]:
     """Итог (формат D) для прогона и /top: шапка, раздел = заголовок + раскрывающаяся цитата, блок моделей, хвост.
     Возвращает сообщения не длиннее limit; цитаты не режутся."""
@@ -534,22 +605,34 @@ def format_results(
             format_model_lines(models),
             limit,
         )
+    if market:
+        blocks += quote_blocks(
+            f"<b>{icon('📈', premium)} Рынок по подкатегориям — {len(market)}</b>",
+            f"<b>{icon('📈', premium)} Рынок (продолжение)</b>",
+            market,
+            limit,
+        )
     if tail:
         blocks.append("\n".join(tail))
     return pack_messages(blocks, limit)
 
 
 def summary_tail(
-    covered: Sequence[tuple[str, float]], errors: Sequence[str], remaining: int, max_age_days: int
+    covered: Sequence[tuple[str, float]],
+    errors: Sequence[str],
+    remaining: int,
+    max_age_days: int,
+    max_pages: int = 5,
+    premium: bool = False,
 ) -> list[str]:
-    """Хвост итога: покрытие, ошибки, сколько осталось (коротко, одним блоком)."""
+    """Хвост итога: покрытие недели, ошибки, сколько осталось (коротко, одним блоком)."""
     tail = []
     if covered:
         tail.append(
-            "Покрыто не полностью: "
-            + ", ".join(f"{html.escape(n)} — {round(d, 1):g} из {max_age_days} дн" for n, d in covered)
+            f"{icon('⚠️', premium)} Не вся неделя (лимит {max_pages} стр.): "
+            + ", ".join(f"{html.escape(n)} — {round(d, 1):g} дн из {max_age_days}" for n, d in covered)
         )
-    tail += [f"ошибка: {html.escape(e[:200])}" for e in errors[:MAX_ERRORS]]
+    tail += [f"{icon('❌', premium)} ошибка: {html.escape(e[:200])}" for e in errors[:MAX_ERRORS]]
     if len(errors) > MAX_ERRORS:
         tail.append(f"и ещё {len(errors) - MAX_ERRORS}")
     if remaining:
@@ -568,7 +651,7 @@ FINAL_HEADERS = {
 BAR_WIDTH = 22
 ETA_MIN_LOADS = 10  # раньше оценка скорости слишком шумная
 # Премиум-иконки набора t.me/addemoji/UnigramIcons: обычный эмодзи -> custom_emoji_id (PREMIUM_EMOJI=true).
-PREMIUM_ICONS = {
+_PREMIUM_RAW = {
     "🔎": "5870974879200711167",
     "📂": "5870570722778156940",
     "ℹ️": "5870609858520158157",
@@ -576,14 +659,39 @@ PREMIUM_ICONS = {
     "✅": "5870633910337015697",
     "❗️": "5870931487146119264",
     "⏲": "5870496192210669260",
-    "📖": "5870729937215819584",
+    "📖": "5870729937215819584",  # в прогрессе «Прошло»: иконка часов
     "▶": "5870921127685001066",
     "⚠️": "5872988737826197458",
+    "📊": "5870930636742595124",
+    "📈": "5870891312022032055",
+    "👁": "5870542612217204751",
+    "💵": "5870478797593120516",
+    "🔗": "5873094527165665327",
+    "📁": "5870570722778156940",
+    "📄": "5873153278023307367",
+    "🗓": "5870847962917113498",
+    "⏰": "5870729937215819584",
+    "⭐️": "5870571830879719414",
+    "🏆": "5870684638195748414",
+    "📌": "5870930744116776638",
+    "🔔": "5870687545888607770",
+    "⚙": "5870982283724328568",
+    "❌": "5870657884844462243",
+    "⛔️": "5872988737826197458",
+    "💡": "5870813306826002498",
+    "👍": "5870785617171844959",
+    "🔄": "5870892901159932239",
+    "📍": "5870718761710915573",
+    "💼": "5870896281299193767",
+    "🌐": "5870718740236079262",
+    "🤖": "5870531058755178453",
 }
+PREMIUM_ICONS = {k.replace("\ufe0f", ""): v for k, v in _PREMIUM_RAW.items()}  # ключи без селектора вариации
 
 
 def icon(emoji: str, premium: bool = False) -> str:
-    cid = PREMIUM_ICONS.get(emoji) if premium else None
+    """Эмодзи или (premium) иконка UnigramIcons через <tg-emoji>; нет в наборе — обычный эмодзи."""
+    cid = PREMIUM_ICONS.get(emoji.replace("\ufe0f", "")) if premium else None
     return f'<tg-emoji emoji-id="{cid}">{emoji}</tg-emoji>' if cid else emoji
 
 

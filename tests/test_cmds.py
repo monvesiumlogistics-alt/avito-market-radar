@@ -258,7 +258,7 @@ async def test_price_handler(tmp_path):
     t = make(sf)
     await send(t, f"/price {fid} 2300")
     reply = t.session.requests[-1].text
-    assert f"Находка #{fid}" in reply and "доставка 12 кг" in reply and "маржа" in reply
+    assert f"Находка #{fid}" in reply and "<code>12 кг</code>" in reply and "маржа" in reply.lower()
     with sf() as db:
         assert db.get(Find, fid).china_price == 2300
     await send(t, "/price 999 100")

@@ -489,7 +489,7 @@ def runs(t) -> list[CrawlRun]:
 def summary_text(t) -> str:
     """Итог (формат D) может состоять из нескольких сообщений: от шапки до конца."""
     sent = t.notifier.sent
-    start = max(i for i, x in enumerate(sent) if "📊 Проверка рынка" in x)
+    start = max(i for i, x in enumerate(sent) if "Проверка рынка ·" in x)
     return "\n\n".join(sent[start:])
 
 
@@ -612,7 +612,7 @@ async def test_hot_sent_immediately_non_hot_only_in_summary(tmp_path):
     assert lines["A 1"].startswith("🔥 ") and lines["B 1"].startswith("🔥 ") and not lines["A 2"].startswith("🔥")
     assert "<b>📦 A — 2</b>" in summary and "<b>📦 B — 1</b>" in summary
     assert summary.index("Item A 1") < summary.index("Item A 2")  # внутри раздела по vpd
-    assert "🎯 3 находок · 🔥 2 · 📂 3 подкатегорий" in summary
+    assert "Найдено: <code>3</code> · 🔥 <code>2</code>" in summary and "Подкатегорий: <code>3</code>" in summary
     with t.sf() as db:
         sent = {f.title: f.sent for f in db.scalars(select(Find))}
     assert sent == {"Item A 1": True, "Item A 2": False, "Item B 1": True}
@@ -624,7 +624,7 @@ async def test_failed_hot_send_stays_unsent_but_in_summary(tmp_path):
     t.crawler.start()
     await t.crawler._task
     assert runs(t)[0].status == "done" and not rows(t)[0].sent  # карточка не ушла: sent=False
-    summary = [e[1] for e in t.provider.events if e[0] == "send" and "📊 Проверка рынка" in e[1]]
+    summary = [e[1] for e in t.provider.events if e[0] == "send" and "Проверка рынка ·" in e[1]]
     assert summary and "Item A 1" in summary[0]  # но в итоге она есть
 
 
@@ -793,7 +793,7 @@ async def test_block_midrun_resumable(tmp_path):
     await t.crawler._task
     (run,) = runs(t)
     assert run.status == "blocked" and "Item A 1" in summary_text(t)  # найденное сохранено и отправлено
-    assert any("🧩 Avito просит проверку" in x and "до 15 мин" in x for x in t.notifier.sent)  # ADR-005
+    assert any("Avito просит проверку" in x and "<code>15</code> мин" in x for x in t.notifier.sent)  # ADR-005
     assert len(t.provider.waits) == 1 and t.provider.waits[0][1] == 15 * 60 and "ограничил" in summary_text(t)
     t.pages[url_of("Ac2")] = html
     t.now[0] += timedelta(hours=1)

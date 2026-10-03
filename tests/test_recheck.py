@@ -63,7 +63,7 @@ async def test_gone_alive_young_old_and_summary(tmp_path):
     assert f["y1"].last_checked_at is None and f["o1"].last_checked_at is None
     assert card_url("y1") not in t.provider.calls and card_url("o1") not in t.provider.calls
     text = summary_text(t)
-    assert "✅ ушло: 1" in text and "ушло за 3 дн" in text
+    assert "Ушло: <code>1</code>" in text and "ушло за 3 дн" in text
     bug = next(ln for ln in text.split("\n") if "Bugaboo Dragonfly" in ln)
     cybex = next(ln for ln in text.split("\n") if "Cybex" in ln)
     assert "✅ ушло за 3 дн" in bug and "ушло" not in cybex  # живая — без отметки
@@ -89,7 +89,7 @@ async def test_recheck_limit_disabled_duplicates_and_budget(tmp_path):
     t.pages[card_url("d1")] = GONE
     await go(t)
     assert t.provider.calls.count(card_url("d1")) == 1 and all(f.gone_at for f in rows(t) if f.external_id == "d1")
-    assert summary_text(t).count("✅ ушло: 1") == 1
+    assert summary_text(t).count("Ушло: <code>1</code>") == 1
 
     t = run_life(tmp_path / "d", report_budget=2)  # warm-up + одна перепроверка, на обход бюджета нет
     for i in (1, 2):

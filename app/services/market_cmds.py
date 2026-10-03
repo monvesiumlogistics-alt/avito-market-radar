@@ -13,18 +13,24 @@ from app.db import Category, Find
 from app.services.market_logic import (
     Entry,
     calc_margin,
+    dedupe_finds,
     format_card,
     format_line,
     format_margin,
     format_results,
     goofish_url,
+    icon,
+    market_lines,
     model_counts,
     model_groups,
     model_key,
+    section_emoji,
     section_name,
     split_message,
+    stats_lines,
     weight_kg,
 )
+from app.services.panels import price_panel
 
 TOP_LIMIT = 15
 
@@ -36,7 +42,7 @@ def _window(db: Session, days: int, now: datetime) -> list[Find]:
 def top_finds(db: Session, days: int, now: datetime, limit: int = TOP_LIMIT) -> list[Find]:
     """Лучшие находки за days дней: по group_key остаётся лучшая по vpd, сортировка по vpd, не больше limit."""
     best: dict[str, Find] = {}
-    for f in _window(db, days, now):  # уже по убыванию vpd: первая в группе лучшая
+    for f in dedupe_finds(_window(db, days, now)):  # одно объявление = одна находка; по убыванию vpd уже не нужно
         best.setdefault(f.group_key, f)
     return sorted(best.values(), key=lambda f: -f.vpd)[:limit]
 
@@ -71,8 +77,9 @@ def entries_for(
             min_price=s.min_price,
             model_count=counts.get(model_key(f.title) or "", 1),
             margin=margin_text(f, name, s),
+            premium=s.premium_emoji,
         )
-        line = format_line(f, f.group_key in (seen or {}), margin_short(f, name, s))
+        line = format_line(f, f.group_key in (seen or {}), margin_short(f, name, s), s.premium_emoji)
         out.append(Entry(f, cat.section if cat else "", name, card, line))
     return out
 
@@ -92,21 +99,40 @@ def top_messages(db: Session, days: int, now: datetime, s: Settings | None = Non
     if not finds:
         return [f"За {days} дн находок нет."]
     s = s or Settings(_env_file=None)
-    window = _window(db, days, now)
+    pr = s.premium_emoji
+    window = dedupe_finds(_window(db, days, now))
     entries = entries_for(db, finds, s, all_finds=window)
-    stats = f"🎯 {len(finds)} находок · 🔥 {sum(bool(f.hot) for f in finds)}"
-    return format_results(f"<b>📊 Топ находок · {days} дн</b>", stats, entries, model_groups(window))
+    crawled = list(
+        db.scalars(
+            select(Category).where(
+                Category.last_crawled_at >= now - timedelta(days=days),
+                Category.last_status == "ok",
+                Category.last_fresh_count.is_not(None),
+            )
+        )
+    )
+    stats = stats_lines(len(finds), sum(bool(f.hot) for f in finds), None, 0, pr)
+    return format_results(
+        f"<b>{icon('📊', pr)} Топ находок · {days} дн</b>",
+        stats,
+        entries,
+        model_groups(window),
+        market=market_lines(crawled, pr),
+        premium=pr,
+    )
 
 
 def set_price(db: Session, find_id: int, yuan: int, s: Settings) -> str | None:
-    """/price <id> <юани>: запомнить цену в Китае и показать маржу; None — находки нет."""
+    """/price <id> <юани>: запомнить цену в Китае и показать панель маржи; None — находки нет."""
     f = db.get(Find, find_id)
     if f is None:
         return None
     f.china_price = yuan
     db.commit()
     cat = db.get(Category, f.category_id)
-    return margin_text(f, cat.name if cat else "", s)
+    kg = weight_kg(f.title, cat.name if cat else "")
+    m = calc_margin(f.price_min, yuan, kg, s.cny_rate, s.cargo_rub_per_kg, s.cargo_air_rub_per_kg)
+    return price_panel(f.id, f.title, f.price_min, m, s.cny_rate, s.cargo_rub_per_kg, s.premium_emoji)
 
 
 CSV_HEADER = (
@@ -136,18 +162,19 @@ def export_csv(db: Session) -> bytes:
     return buf.getvalue().encode("utf-8-sig")
 
 
-def cats_text(db: Session) -> list[str]:
+def cats_text(db: Session, premium: bool = False) -> list[str]:
     """Разделы: название, подкатегорий, из них пропущено."""
     sections: dict[str, list[Category]] = {}
     for c in db.scalars(select(Category).order_by(Category.section, Category.id)):
         sections.setdefault(c.section, []).append(c)
     if not sections:
         return ["Категорий пока нет: запусти /report или scripts.import_map."]
-    lines = ["<b>Разделы</b> (подкатегорий / пропущено)"]
+    lines = [f"<b>{icon('📁', premium)} Разделы</b>", "подкатегорий / выключено", ""]
     for sec, cs in sections.items():
         skipped = sum(bool(c.skipped) for c in cs)
-        mark = "⛔ " if skipped == len(cs) else ""
-        lines.append(f"{mark}{html.escape(section_name(sec))} <code>{html.escape(sec)}</code>: {len(cs)} / {skipped}")
+        mark = f"{icon('⛔️', premium)} " if skipped == len(cs) else f"{section_emoji(sec)} "
+        name = html.escape(section_name(sec))
+        lines.append(f"{mark}{name} <code>{html.escape(sec)}</code>: <code>{len(cs)} / {skipped}</code>")
     return split_message("\n".join(lines))
 
 

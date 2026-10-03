@@ -164,7 +164,7 @@ async def test_summary_has_all_finds_once_even_when_stopped(tmp_path):
     await t.crawler._task
     text = summary_text(t)
     assert "Item B 1" in text and "Item A 1" in text  # итог — все находки прогона, 🔥 тоже (ADR-013)
-    assert "🎯 2 находок · 🔥 2 · 📂 2 подкатегорий" in text
+    assert "Найдено: <code>2</code> · 🔥 <code>2</code>" in text and "Подкатегорий: <code>2</code>" in text
     assert text.count("Item A 1") == 1
 
 
@@ -389,7 +389,7 @@ async def test_scanner_block_alert_escaped(tmp_path):
     await t.scanner.run_watch_rules(force=True)
     alert = t.notifier.texts[0]
     assert "&lt;b&gt;Доступ &amp; ограничен&lt;/b&gt;" in alert and "<b>Доступ" not in alert
-    assert htmllib.unescape(alert).count("<b>") == 1
+    assert htmllib.unescape(alert).count("<b>Доступ") == 1
 
 
 # --- Даты ---
