@@ -46,6 +46,12 @@ TEXT_PATTERNS = {
     "promoted": re.compile(r"Продвинуто|Забронировано"),
     "views": re.compile(r"(\d[\d\s]*)\s*просмотр"),
     "today": re.compile(r"\+\s*(\d[\d\s]*)\s*сегодня"),
+    # страница снятого/проданного объявления. Слова НЕ проверены на живом Avito (фикстуры нет): подтвердить (ADR-010)
+    "gone": re.compile(
+        r"Объявление снято с публикации|Объявление закрыто|Товар продан|Объявление больше не доступно"
+        r"|Такой страницы не существует|Страница не найдена",
+        re.IGNORECASE,
+    ),
 }
 
 FIREWALL_MARKERS = ('class="firewall-container', "firewall-title")  # вёрстка страницы блока: ищем во всём HTML
@@ -65,6 +71,20 @@ def is_blocked(html: str, title: str = "") -> bool:
         tag.decompose()
     head = soup.get_text(" ", strip=True)[:BLOCK_TEXT_HEAD]
     return any(m in head for m in BLOCK_TEXTS)
+
+
+def is_gone(html: str, title: str = "", status: int | None = None) -> bool:
+    """Объявление снято/продано: HTTP 404/410, либо нет счётчика просмотров и в title/начале видимого текста
+    стоит маркер из TEXT_PATTERNS['gone'] (описание с «Товар продан» глубже 3000 символов и при живом счётчике
+    не считается). «Товар зарезервирован» — не снято."""
+    if status in (404, 410):
+        return True
+    soup = BeautifulSoup(html, "html.parser")
+    if _first(soup, "item_views") is not None:
+        return False
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    return bool(TEXT_PATTERNS["gone"].search(f"{title} {soup.get_text(' ', strip=True)[:BLOCK_TEXT_HEAD]}"))
 
 
 def parse_price(text: str | None) -> int | None:

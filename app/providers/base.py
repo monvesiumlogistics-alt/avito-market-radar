@@ -19,6 +19,7 @@ class Page:
     html: str
     title: str
     final_url: str
+    status: int | None = None  # HTTP-статус основной загрузки (404/410 = объявления нет)
 
 
 class BrowserGate:

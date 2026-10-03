@@ -19,6 +19,7 @@ from app.models import Listing
 from app.providers.avito_parser import (
     BASE_URL,
     SELECTORS,
+    is_gone,
     msk_now,
     parse_item_page,
     parse_published,
@@ -36,6 +37,7 @@ from app.services.market_logic import (
     date_checked,
     find_age,
     format_find,
+    format_gone,
     format_models,
     format_progress,
     format_summary,
@@ -56,6 +58,8 @@ RESUMABLE = ("running", "stopped", "blocked", "interrupted", "failed")  # budget
 PROGRESS_EVERY = timedelta(minutes=1)
 FEEDBACK_MAX_FINDS = 8  # кнопки 👍/👎 только у порции до 8 находок (лимит клавиатуры Telegram)
 MAX_ERROR_STREAK = 3
+RECHECK_MIN_AGE = timedelta(days=2)  # перепроверяем находки возрастом 2-14 дней
+RECHECK_MAX_AGE = timedelta(days=14)
 STATUS_NOTES = {
     "stopped": "Проверка остановлена, продолжу по /report.",
     "blocked": "⚠️ Avito ограничил доступ, продолжу по /report.",
@@ -129,6 +133,7 @@ class MarketCrawler:
         self._progress_at: datetime | None = None
         self._progress_id: int | None = None
         self._progress_tried = False
+        self.gone_ids: list[int] = []  # находки, исчезнувшие при перепроверке в этом прогоне
 
     # --- жизненный цикл ---
 
@@ -161,6 +166,7 @@ class MarketCrawler:
             self.run_id, self.loads, self._loads_saved = run.id, 0, 0
         self.stop_requested, self.errors = False, []
         self._progress_at = self._progress_id = None
+        self.gone_ids = []
         self._progress_tried = False  # на продолжении новое сообщение о прогрессе (m6)
         self._task = asyncio.create_task(self._run())
         return reply
@@ -191,6 +197,7 @@ class MarketCrawler:
                 self.provider = await self._open_provider()
                 self.loads += 1  # первая загрузка включает warm-up: два goto (N7)
                 await self._send_progress(force=True)
+                await self._recheck_finds()
                 await self.discover_sections()
                 await self._crawl_all()
                 status = "done"
@@ -368,6 +375,7 @@ class MarketCrawler:
         with self.session_factory() as db:
             finds = list(db.scalars(select(Find).where(Find.run_id == self.run_id)))
             unsent = [f for f in finds if not f.sent]
+            gone = list(db.scalars(select(Find).where(Find.id.in_(self.gone_ids)))) if self.gone_ids else []
             cats = self._categories(db)
             done = [c for c in cats if c.last_run_id == self.run_id]
             covered = [
@@ -393,6 +401,7 @@ class MarketCrawler:
                 STATUS_NOTES.get(status),
                 totals,
                 format_models(model_groups(finds)),
+                format_gone(gone),
             )
             ids = [f.id for f in unsent]
         if await self._send(text) and ids:
@@ -474,6 +483,57 @@ class MarketCrawler:
         if passed:
             await self.notifier.send_text("✅ Проверка пройдена, продолжаю")
         return passed
+
+    # --- перепроверка прошлых находок («ушло за N дней») ---
+
+    async def _recheck_finds(self) -> None:
+        """До обхода: открыть до RECHECK_MAX прошлых находок (2-14 дней, ещё не ушли). Страница снята/продана ->
+        gone_at; жива -> last_checked_at и текущие просмотры. Блок/стоп/бюджет идут обычным путём (ADR-005)."""
+        now, limit = self.clock(), self.settings.recheck_max
+        if limit <= 0:
+            return
+        with self.session_factory() as db:
+            rows = db.scalars(
+                select(Find)
+                .where(
+                    Find.gone_at.is_(None),
+                    Find.created_at <= now - RECHECK_MIN_AGE,
+                    Find.created_at >= now - RECHECK_MAX_AGE,
+                )
+                .order_by(Find.last_checked_at.is_not(None), Find.last_checked_at, Find.created_at)
+            ).all()
+            todo: dict[str, tuple[int, str]] = {}
+            for f in rows:  # одно объявление могло быть найдено в нескольких прогонах: открываем один раз
+                todo.setdefault(f.external_id, (f.id, f.url))
+        for ext_id, (_, url) in list(todo.items())[:limit]:
+            if self.loads >= self.settings.report_budget:
+                break  # перепроверка не съедает бюджет обхода целиком: на обход остаётся только то, что осталось
+            try:
+                res = await self._fetch(url, SELECTORS["item_views"][0])
+                gone = is_gone(res.html, res.title, res.status)
+                views = None if gone else parse_item_page(res.html).views
+            except (StopRequested, BudgetExhausted, ProviderBlocked, BrowserLost):
+                raise
+            except Exception as e:
+                log.warning("[MARKET] перепроверка %s: %s", url, e)
+                continue
+            self._save_recheck(ext_id, gone, views)
+
+    def _save_recheck(self, ext_id: str, gone: bool, views: int | None) -> None:
+        with self.session_factory() as db:
+            now = self.clock()
+            marked = False
+            for f in db.scalars(select(Find).where(Find.external_id == ext_id)):
+                f.last_checked_at = now
+                if gone and f.gone_at is None:
+                    f.gone_at = now
+                    if not marked:  # в итоге одна строка на объявление
+                        self.gone_ids.append(f.id)
+                        marked = True
+                if views is not None:
+                    f.views_last = views
+            self._add_loads(db.get(CrawlRun, self.run_id))
+            db.commit()
 
     # --- разделы ---
 

@@ -84,7 +84,7 @@ class AvitoBrowserProvider(AvitoProvider):
             if ready_selector:
                 with contextlib.suppress(PlaywrightTimeout):  # пустая выдача или блок: разберёмся ниже
                     await tab.wait_for_selector(ready_selector, timeout=15_000)
-            page = Page(await tab.content(), await tab.title(), tab.url)
+            page = Page(await tab.content(), await tab.title(), tab.url, status)
         finally:
             await tab.close()
 

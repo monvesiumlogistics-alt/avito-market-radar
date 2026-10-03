@@ -108,6 +108,9 @@ class Find(Base):
     sent: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime]
     china_price: Mapped[int | None]  # US-8, в v1 пусто
+    gone_at: Mapped[datetime | None]  # объявление исчезло при перепроверке: «ушло» = спрос
+    last_checked_at: Mapped[datetime | None]
+    views_last: Mapped[int | None]  # просмотры на момент последней перепроверки
     feedback: Mapped[int] = mapped_column(default=0)  # 👍 +1 / 👎 -1 из кнопок под порцией
 
 
@@ -115,6 +118,9 @@ _ADDED_COLUMNS = (  # (таблица, колонка, тип) — конста�
     ("categories", "prior_score", "FLOAT"),
     ("categories", "skipped", "BOOLEAN NOT NULL DEFAULT 0"),
     ("finds", "feedback", "INTEGER NOT NULL DEFAULT 0"),
+    ("finds", "gone_at", "DATETIME"),
+    ("finds", "last_checked_at", "DATETIME"),
+    ("finds", "views_last", "INTEGER"),
 )
 
 

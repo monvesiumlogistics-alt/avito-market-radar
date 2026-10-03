@@ -231,6 +231,7 @@ class ModelGroup:
     price_min: int
     price_max: int
     best: object  # находка с максимальным vpd
+    gone: int = 0  # сколько из объявлений уже ушло
 
 
 def model_groups(finds: Sequence) -> list[ModelGroup]:
@@ -249,6 +250,7 @@ def model_groups(finds: Sequence) -> list[ModelGroup]:
             ModelGroup(
                 key, len(fs), min(f.vpd for f in fs), best.vpd, min(f.price_min for f in fs),
                 max(f.price_max for f in fs), best,
+                sum(bool(getattr(f, "gone_at", None)) for f in fs),
             )
         )  # fmt: skip
     return sorted(groups, key=lambda g: -g.count * g.vpd_max)
@@ -267,6 +269,8 @@ def format_models(groups: Sequence[ModelGroup]) -> list[str]:
             price,
             f'<a href="{html.escape(g.best.url)}">лучшее</a>',
         ]
+        if g.gone:
+            parts.append(f"✅ ушло {g.gone}")
         if gf := goofish_url(g.best.title):
             parts.append(f'<a href="{html.escape(gf)}">🔎 goofish</a>')
         lines.append(" · ".join(parts))
@@ -343,6 +347,25 @@ def _times(n: int) -> str:
     return "раз" if n % 10 in (0, 1) or n % 10 >= 5 or 11 <= n % 100 <= 14 else "раза"
 
 
+def gone_days(f) -> int | None:
+    """За сколько дней находка ушла (дней от находки до исчезновения, не меньше 1); None — не ушла/неизвестно."""
+    gone_at = getattr(f, "gone_at", None)
+    return max(round((gone_at - f.created_at).total_seconds() / 86400), 1) if gone_at else None
+
+
+def format_gone(finds: Sequence) -> list[str]:
+    """Блок итога «ушло»: сколько и за сколько дней в среднем, затем строки (название-ссылка, дней, vpd, цена)."""
+    if not finds:
+        return []
+    days = [gone_days(f) for f in finds]
+    lines = [f"<b>✅ Ушло: {len(finds)} (за ~{round(sum(days) / len(days))} дн)</b>"]
+    for f, d in sorted(zip(finds, days, strict=True), key=lambda p: p[1]):
+        price = f"{_rub(f.price_min)} ₽" if f.price_min == f.price_max else f"{_rub(f.price_min)}–{_rub(f.price_max)} ₽"
+        link = f'<a href="{html.escape(f.url)}">{html.escape(f.title[:TITLE_CAP])}</a>'
+        lines.append(f"{link} — ушло за {d} дн · {f.vpd}/день · {price}")
+    return lines
+
+
 def format_find(f: Find, category: str, seen_on: datetime | None = None) -> str:
     """Одна строка = одна группа. Каждая строка самодостаточна по тегам (резать можно по границам строк)."""
     price = f"{_rub(f.price_min)} ₽" if f.price_min == f.price_max else f"{_rub(f.price_min)}–{_rub(f.price_max)} ₽"
@@ -351,6 +374,8 @@ def format_find(f: Find, category: str, seen_on: datetime | None = None) -> str:
     parts = [price, views, age, f"выставлено {f.copies} {_times(f.copies)}", html.escape(category)]
     if seen_on:
         parts.append(f"уже было {seen_on:%d.%m}")
+    if gone := gone_days(f):
+        parts.append(f"✅ ушло за {gone} дн")
     if (find_id := getattr(f, "id", None)) is not None:
         parts.append(f"#{find_id}")  # для /price <id> <юани>
     if goofish := goofish_url(f.title):
@@ -376,6 +401,7 @@ def format_summary(
     note: str | None = None,
     totals: str | None = None,
     models: Sequence[str] = (),
+    gone: Sequence[str] = (),
 ) -> str:
     """Итог прогона. covered: (подкатегория, дней покрыто) только там, где неделя не вошла в лимит страниц."""
     lines = [
@@ -384,6 +410,7 @@ def format_summary(
         *([totals] if totals else []),
         *(find_lines or ["Находок нет."]),
         *models,
+        *gone,
     ]
     if covered:
         lines.append(
