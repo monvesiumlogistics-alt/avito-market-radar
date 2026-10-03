@@ -519,7 +519,7 @@ async def test_already_running_shows_progress(tmp_path):
     t = life(tmp_path, {"A": [900]})
     t.crawler.start()
     again = t.crawler.start()
-    assert again.startswith("Проверка уже идёт\n⏳ Проверка рынка: разделов 0/1")
+    assert again.startswith("Проверка уже идёт\n⏳ Проверка рынка — 00:00")
     await t.crawler._task
     assert len(runs(t)) == 1
 
