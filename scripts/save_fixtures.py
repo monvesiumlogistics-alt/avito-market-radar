@@ -3,8 +3,9 @@
     PYTHONIOENCODING=utf-8 .venv/Scripts/python -m scripts.save_fixtures crawl [section_slug]
     PYTHONIOENCODING=utf-8 .venv/Scripts/python -m scripts.save_fixtures sanitize RAW_NAME FIXTURE_NAME
 
-`crawl` saves RAW html to data/fixtures_raw/ (never commit) and prints a manifest; `sanitize` strips seller
-names/phones and writes tests/fixtures/<FIXTURE_NAME>.html. Hard cap MAX_LOADS page loads; stops on any block.
+`crawl` saves RAW html to data/fixtures_raw/ (never commit) and prints a manifest; `sanitize` strips seller/buyer
+names, review texts, phones and writes tests/fixtures/<FIXTURE_NAME>.html.
+Hard cap MAX_LOADS page loads; stops on any block.
 """
 
 import asyncio
@@ -133,6 +134,9 @@ def sanitize(html: str, names: tuple[str, ...] = ()) -> str:
     for a in soup.select(sel):
         for t in a.find_all(string=True):
             t.replace_with("SELLER" if t.strip() else t)
+    # отзывы в профиле: имя покупателя и свободный текст
+    for t in soup.find_all(attrs={"data-marker": re.compile(r"^review\(\d+\)/(header/title|text-section/text)$")}):
+        t.string = "BUYER" if t["data-marker"].endswith("title") else "REVIEW TEXT"
     out = str(soup)
     for name in names:  # extra seller names given on the command line (profile h1, reviews, ...)
         out = out.replace(name, "SELLER")
