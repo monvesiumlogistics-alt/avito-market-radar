@@ -255,8 +255,9 @@ async def test_retry_after_captcha_counts_as_load(tmp_path):
 
 
 class Tab:
-    def __init__(self, blocked_for: int = 0, hang: bool = False):
+    def __init__(self, blocked_for: int = 0, hang: bool = False, after: str = '<html><div data-marker="item">ok</div>'):
         self.left, self.hang, self.closed, self.probes = blocked_for, hang, False, 0
+        self.after = after
 
     async def goto(self, url, **kw):
         pass
@@ -266,7 +267,9 @@ class Tab:
             await asyncio.sleep(10)
         self.probes += 1
         self.left -= 1
-        return "<html>Вы робот?</html>" if self.left >= 0 else "<html>ok</html>"
+        if self.left >= 0:
+            return "<html>Вы робот?</html>"
+        return self.after
 
     async def title(self):
         return ""
@@ -289,6 +292,12 @@ async def test_wait_unblocked_passes_when_unblocked():
     tab = Tab(blocked_for=2)
     assert await provider_with(tab).wait_unblocked("u", 5, 0.01) is True
     assert tab.probes == 3 and tab.closed
+
+
+async def test_wait_unblocked_blank_tab_is_not_passed():
+    """Вкладка не загрузилась (пусто/about:blank) — это не «проверка пройдена» (ложный ✅ 04.10)."""
+    tab = Tab(blocked_for=0, after="<html><head></head><body></body></html>")
+    assert await provider_with(tab).wait_unblocked("u", 0.1, 0.01) is False
 
 
 async def test_wait_unblocked_times_out_by_wall_clock():

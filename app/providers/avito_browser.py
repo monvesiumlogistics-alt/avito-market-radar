@@ -15,6 +15,7 @@ from app.providers.base import AvitoProvider, Page, ProviderBlocked
 log = logging.getLogger(__name__)
 
 PROBE_TIMEOUT = 15  # с на tab.content()/title() при ожидании капчи
+REAL_PAGE_MARKER = "data-marker="  # есть на любой странице Avito (выдача, карточка, профиль), нет на блоке/пустой
 BLOCK_STATUSES = {403, 429, 439}  # 439 — капча «проверка безопасности», 429 — «проблема с IP» (ADR-004)
 
 
@@ -115,7 +116,8 @@ class AvitoBrowserProvider(AvitoProvider):
                 with contextlib.suppress(Exception):
                     html = await asyncio.wait_for(tab.content(), PROBE_TIMEOUT)
                     title = await asyncio.wait_for(tab.title(), PROBE_TIMEOUT)
-                    if not is_blocked(html, title):
+                    # пройдено = во вкладке настоящая страница Avito, а не блок и не пустая/недогруженная вкладка
+                    if not is_blocked(html, title) and REAL_PAGE_MARKER in html:
                         return True
             return False
         finally:
