@@ -48,6 +48,7 @@ log = logging.getLogger(__name__)
 
 RESUMABLE = ("running", "stopped", "blocked", "interrupted", "failed")  # budget/done: следующий прогон новый
 PROGRESS_EVERY = timedelta(minutes=1)
+MAX_ERROR_STREAK = 3
 STATUS_NOTES = {
     "stopped": "Проверка остановлена, продолжу по /report.",
     "blocked": "⚠️ Avito ограничил доступ, продолжу по /report.",
@@ -70,6 +71,10 @@ class StopRequested(Exception):
 
 class BudgetExhausted(Exception):
     """Бюджет загрузок прогона исчерпан."""
+
+
+class BreakerTripped(Exception):
+    """Несколько подкатегорий подряд упали с ошибкой: системный сбой, дальше идти бессмысленно."""
 
 
 @dataclass
@@ -109,6 +114,8 @@ class MarketCrawler:
         self.loads = 0
         self.errors: list[str] = []
         self.send_delay = 1.0  # пауза между кусками длинного сообщения (лимиты Telegram); в тестах 0
+        self.captcha_poll = 5.0  # с между проверками, прошёл ли человек капчу
+        self.reopen_delay = 2.0  # с до повторного запуска браузера (m10)
         self._task: asyncio.Task | None = None
         self._owns_gate = False
         self._progress_at: datetime | None = None
@@ -171,8 +178,7 @@ class MarketCrawler:
                 if self.gate:
                     await self.gate.acquire()
                     self._owns_gate = True
-                self.provider = self.provider_factory()
-                await self.provider.__aenter__()
+                self.provider = await self._open_provider()
                 self.loads += 1  # первая загрузка включает warm-up: два goto (N7)
                 await self._send_progress(force=True)
                 await self.discover_sections()
@@ -182,9 +188,10 @@ class MarketCrawler:
                 status = "stopped"
             except BudgetExhausted:
                 status = "budget"
-            except ProviderBlocked as e:
-                log.error("[MARKET] блок: %s", e)
+            except ProviderBlocked:  # ждали человека и не дождались (или HEADLESS): сохраняем, продолжим по /report
                 status = "blocked"
+            except BreakerTripped:
+                status = "failed"
             except Exception:
                 log.exception("[MARKET] прогон упал")
                 status = "failed"
@@ -212,12 +219,17 @@ class MarketCrawler:
     async def _crawl_all(self) -> None:
         with self.session_factory() as db:
             order = crawl_order(self._categories(db), self.run_id, self.clock())
+        streak = 0
         for i, cat in enumerate(order):
             if self.stop_requested:
                 raise StopRequested
             if self.loads >= self.settings.report_budget:
                 raise BudgetExhausted
-            await self.crawl_subcategory(cat.id)
+            # предохранитель (M4): Chromium упал / окно закрыли -> каждая следующая подкатегория падает мгновенно
+            streak = 0 if await self.crawl_subcategory(cat.id) else streak + 1
+            if streak >= MAX_ERROR_STREAK:
+                log.error("[MARKET] %d ошибок подряд, прогон остановлен", streak)
+                raise BreakerTripped
             await self._send_progress()
             if i + 1 == len(order) or order[i + 1].section != cat.section:
                 await self._portion(cat.section)
@@ -327,17 +339,74 @@ class MarketCrawler:
     # --- загрузки ---
 
     async def _before_load(self) -> None:
-        """Единственная точка перед каждой загрузкой: стоп, бюджет, счётчик (M2). Здесь же будет уступка браузера."""
+        """Единственная точка перед каждой загрузкой: стоп, бюджет, уступка браузера, счётчик (M2)."""
         if self.stop_requested:
             raise StopRequested
         if self.loads >= self.settings.report_budget:
             raise BudgetExhausted
+        if self.gate and self.gate.contended:
+            await self._handover()
+        self.loads += 1
+
+    async def _open_provider(self) -> AvitoProvider:
+        """Запуск браузера; один повтор через паузу: профиль после close() иногда ещё занят (m10)."""
+        for attempt in (1, 2):
+            try:
+                provider = self.provider_factory()
+                await provider.__aenter__()
+                return provider
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                log.warning("[MARKET] браузер не открылся (%s), повтор через %ss", e, self.reopen_delay)
+                await asyncio.sleep(self.reopen_delay)
+
+    async def _handover(self) -> None:
+        """Мониторингу нужен браузер: закрыть Chromium, отдать замок, взять снова, открыть новый браузер (M1).
+
+        Состояние подкатегории в памяти, ничего не теряется. Новый браузер = новый warm-up = +1 загрузка.
+        Если ошибка случится между release и acquire, _owns_gate=False и finally в _run не отпустит чужой замок.
+        """
+        old, self.provider = self.provider, None
+        with contextlib.suppress(Exception):
+            await old.__aexit__(None, None, None)
+        self.gate.release()
+        self._owns_gate = False
+        await self.gate.acquire()
+        self._owns_gate = True
+        self.provider = await self._open_provider()
         self.loads += 1
 
     async def _fetch(self, url: str, ready_selector: str | None = None):
         await self._before_load()
+        try:
+            return await self._timed_fetch(url, ready_selector)
+        except ProviderBlocked as e:
+            if not await self._wait_for_human(url, e):
+                raise
+            await self._before_load()
+            return await self._timed_fetch(url, ready_selector)
+
+    async def _timed_fetch(self, url: str, ready_selector: str | None):
         async with asyncio.timeout(self.fetch_timeout):
             return await self.provider.fetch(url, ready_selector)
+
+    async def _wait_for_human(self, url: str, reason: ProviderBlocked) -> bool:
+        """ADR-005: капчу проходит человек в окне бота; бот её не решает. Браузер остаётся открытым на заблокированной
+        странице. True: проверка пройдена, загрузку можно повторить. Нужен видимый браузер (HEADLESS=false)."""
+        minutes = self.settings.captcha_wait_minutes
+        log.error("[MARKET] блок: %s", reason)
+        if self.settings.headless or minutes <= 0:
+            return False
+        await self.notifier.send_text(
+            f"🧩 Avito просит проверку — пройди её в окне браузера бота (жду до {minutes} мин)"
+        )
+        passed = await self.provider.wait_unblocked(url, minutes * 60, self.captcha_poll, lambda: self.stop_requested)
+        if self.stop_requested:
+            raise StopRequested
+        if passed:
+            await self.notifier.send_text("✅ Проверка пройдена, продолжаю")
+        return passed
 
     # --- разделы ---
 

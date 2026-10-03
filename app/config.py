@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     report_cards_per_subcat: int = 12
     report_budget: int = 600  # загрузок страниц на прогон
     report_resume_hours: int = 12
+    # сколько ждать, пока человек пройдёт капчу в окне бота (нужен HEADLESS=false); 0 = не ждать
+    captcha_wait_minutes: int = 15
     check_seller_date: bool = True
     page_delay_min: float = 2
     page_delay_max: float = 5

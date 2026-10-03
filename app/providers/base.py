@@ -66,3 +66,7 @@ class AvitoProvider(ABC):
 
     async def fetch(self, url: str, ready_selector: str | None = None) -> Page:
         raise NotImplementedError
+
+    async def wait_unblocked(self, url: str, timeout_s: float, poll_s: float = 5, cancel=None) -> bool:
+        """Ждёт, пока человек пройдёт проверку на странице url (ADR-005). По умолчанию не умеет: False."""
+        return False

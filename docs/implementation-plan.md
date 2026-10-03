@@ -105,7 +105,7 @@ real deps: I3←I1 · I5←I4 · I7←I6 · I9←I2,I3,I4,I7 · I9b←I2,I3,I9 �
 ## Iteration 11: Gate handover, block, failure breaker  (M–L, opus)
 **Modify**: `market.py`, `tests/test_market.py`, `tests/test_scanner.py`.
 **Work**: add only the `contended` branch to `_before_load` (loop untouched, N6): `__aexit__` old provider, release, re-acquire, **new** provider (fresh warm-up, +1 load), one retry after 2 s on «profile in use» (m10). `ProviderBlocked` → alert + summary + `blocked`. Breaker: 3 consecutive subcategory errors → `failed`; an errored subcat sets `last_run_id` but not `last_crawled_at` (M4).
-**Done**: [ ] test_scan_gets_gate_within_one_load [ ] error between release and re-acquire raises neither `RuntimeError` nor hides the cause [ ] handover mid-subcategory loses nothing [ ] test_block_midrun_resumable [ ] 3 errors → `failed`, one summary, errors capped [ ] test_crawler_crash_monitor_unaffected [ ] 23 original tests pass [ ] gate.
+**Done**: [x] test_scan_gets_gate_within_one_load [x] error between release and re-acquire raises neither `RuntimeError` nor hides the cause [x] handover mid-subcategory loses nothing [x] test_block_midrun_resumable [x] 3 errors → `failed`, one summary, errors capped [x] test_crawler_crash_monitor_unaffected [x] 23 original tests pass [x] gate.
 **Depends**: 6,10 · **Risk**: high. Blast radius: monitor starvation. Rollback: `gate=None` in `main.py`.
 
 ## Iteration 12: Telegram commands + wiring  (M)

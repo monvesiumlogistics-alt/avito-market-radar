@@ -92,6 +92,27 @@ class AvitoBrowserProvider(AvitoProvider):
             raise ProviderBlocked(f"{page.title or 'Avito: доступ ограничен'} (HTTP {status}, {page.final_url})")
         return page
 
+    async def wait_unblocked(self, url: str, timeout_s: float, poll_s: float = 5, cancel=None) -> bool:
+        """ADR-005: человек проходит проверку в видимом окне, бот её не решает и не обходит.
+
+        Открываем заблокированный url в отдельной вкладке и опрашиваем её, пока страница не перестанет быть блоком.
+        """
+        assert self._ctx, "use `async with provider:`"
+        tab = await self._ctx.new_page()
+        try:
+            with contextlib.suppress(Exception):
+                await tab.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            for _ in range(int(timeout_s // poll_s)):
+                await asyncio.sleep(poll_s)
+                if cancel and cancel():
+                    return False
+                with contextlib.suppress(Exception):
+                    if not is_blocked(await tab.content(), await tab.title()):
+                        return True
+            return False
+        finally:
+            await tab.close()
+
     async def search(self, search: SearchUrl, page: int = 1) -> list[Listing]:
         fetched = await self.fetch(with_page(search.url, page), SELECTORS["card"][0])
         listings = parse_search_html(fetched.html, search.label)

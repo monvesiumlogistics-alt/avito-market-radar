@@ -61,11 +61,26 @@ class FakeProvider(AvitoProvider):
     def __init__(self, pages: dict):
         self.pages, self.calls = pages, []
         self.events: list = []  # общий журнал с уведомителем
+        self.enters = self.exits = 0
+        self.human = False  # прошёл ли человек капчу
+        self.waits: list = []
+
+    async def __aenter__(self):
+        self.enters += 1
+        return self
+
+    async def __aexit__(self, *exc):
+        self.exits += 1
+
+    async def wait_unblocked(self, url, timeout_s, poll_s=5, cancel=None):
+        self.waits.append((url, timeout_s))
+        return self.human
 
     async def search(self, search, page=1):
         raise AssertionError
 
     async def fetch(self, url, ready_selector=None):
+        await asyncio.sleep(0)  # как настоящий ввод-вывод: другие задачи успевают вклиниться
         self.calls.append(url)
         self.events.append(("fetch", url))
         res = "<html></html>" if "s=104" in url and url not in self.pages else self.pages[url]  # KeyError = ошибка
@@ -651,3 +666,159 @@ async def test_gate_held_during_run_and_released(tmp_path):
     t.crawler.start()
     await t.crawler._task
     assert seen == [True] and not gate.locked
+
+
+# --- уступка браузера, блок, предохранитель (I11) ---
+
+
+def start_monitor(t, gate, tasks):
+    """Мониторинг D&G: берёт замок, как Scanner.run_watch_rules."""
+
+    async def monitor():
+        async with gate.hold():
+            t.provider.events.append(("monitor", None))
+
+    return lambda: tasks.append(asyncio.create_task(monitor()))
+
+
+def fetches_between_hook_and_monitor(t, hook_url):
+    ev = t.provider.events
+    i = next(i for i, e in enumerate(ev) if e == ("fetch", hook_url))
+    j = next(i for i, e in enumerate(ev) if e[0] == "monitor")
+    return sum(1 for e in ev[i:j] if e[0] == "fetch") - 1
+
+
+async def test_scan_gets_gate_within_one_load_and_handover_loses_nothing(tmp_path):
+    gate, tasks = BrowserGate(), []
+    t = life(tmp_path, {"A": [900, 900]}, gate=gate)
+    t.crawler.reopen_delay = 0
+    hook(t, url_of("Ac1"), start_monitor(t, gate, tasks))  # проверка D&G встаёт в очередь во время обхода c1
+    t.crawler.start()
+    await t.crawler._task
+    await asyncio.gather(*tasks)
+    assert (
+        fetches_between_hook_and_monitor(t, url_of("Ac1")) <= 2
+    )  # уступили в пределах одной загрузки, не подкатегории
+    assert t.provider.enters == t.provider.exits == 2  # старый браузер закрыт, новый открыт
+    (run,) = runs(t)
+    assert run.status == "done" and run.finds_count == 2  # посреди подкатегории ничего не потеряно
+    assert run.loads == 8  # warm-up + 6 загрузок + warm-up нового браузера
+    assert not gate.locked
+
+
+async def test_reopen_error_after_release_no_runtime_error_and_cause_kept(tmp_path):
+    gate, tasks = BrowserGate(), []
+    t = life(tmp_path, {"A": [900] * 4}, gate=gate)
+    t.crawler.reopen_delay = 0
+    opened = []
+
+    def factory():
+        opened.append(1)
+        if len(opened) > 1:
+            raise RuntimeError("профиль занят")
+        return t.provider
+
+    t.crawler.provider_factory = factory
+    hook(t, url_of("Ac1"), start_monitor(t, gate, tasks))
+    t.crawler.start()
+    await t.crawler._task
+    await asyncio.gather(*tasks)
+    assert runs(t)[0].status == "failed" and not gate.locked
+    assert "профиль занят" in t.crawler.errors[0] and not any("not acquired" in e for e in t.crawler.errors)
+
+
+async def test_reopen_retry_after_profile_in_use(tmp_path):
+    gate, tasks = BrowserGate(), []
+    t = life(tmp_path, {"A": [900, 900]}, gate=gate)
+    t.crawler.reopen_delay = 0
+    calls = []
+
+    def factory():
+        calls.append(1)
+        if len(calls) == 2:  # первая попытка переоткрытия: профиль ещё занят
+            raise RuntimeError("profile in use")
+        return t.provider
+
+    t.crawler.provider_factory = factory
+    hook(t, url_of("Ac1"), start_monitor(t, gate, tasks))
+    t.crawler.start()
+    await t.crawler._task
+    assert runs(t)[0].status == "done" and runs(t)[0].finds_count == 2 and len(calls) == 3
+
+
+def break_page(t, sec_n, times=None):
+    """Страница выдачи отдаёт блок (всегда или times раз)."""
+    url, html, n = url_of(sec_n), t.pages[url_of(sec_n)], [0]
+
+    def page():
+        n[0] += 1
+        if times is None or n[0] <= times:
+            raise ProviderBlocked("Доступ ограничен (HTTP 439)")
+        return html
+
+    t.pages[url] = page
+    return html
+
+
+async def test_block_midrun_resumable(tmp_path):
+    t = life(tmp_path, {"A": [900, 900]})
+    html = break_page(t, "Ac2")
+    t.crawler.start()
+    await t.crawler._task
+    (run,) = runs(t)
+    assert run.status == "blocked" and "Item A 1" in summary_text(t)  # найденное сохранено и отправлено
+    assert any("🧩 Avito просит проверку" in x and "до 15 мин" in x for x in t.notifier.sent)  # ADR-005
+    assert len(t.provider.waits) == 1 and t.provider.waits[0][1] == 15 * 60 and "ограничил" in summary_text(t)
+    t.pages[url_of("Ac2")] = html
+    t.now[0] += timedelta(hours=1)
+    assert t.crawler.start() == "Продолжаю проверку (пройдено подкатегорий: 1)"
+    await t.crawler._task
+    assert runs(t)[0].status == "done" and runs(t)[0].finds_count == 2 and search_calls(t, "c1") == 2
+
+
+async def test_block_human_passes_crawl_continues(tmp_path):
+    t = life(tmp_path, {"A": [900, 900]})
+    t.provider.human = True
+    break_page(t, "Ac2", times=1)
+    t.crawler.start()
+    await t.crawler._task
+    assert runs(t)[0].status == "done" and runs(t)[0].finds_count == 2
+    assert any("🧩" in x for x in t.notifier.sent) and any("✅ Проверка пройдена" in x for x in t.notifier.sent)
+
+
+async def test_block_headless_no_wait(tmp_path):
+    t = life(tmp_path, {"A": [900, 900]}, headless=True)
+    break_page(t, "Ac2")
+    t.crawler.start()
+    await t.crawler._task
+    assert runs(t)[0].status == "blocked" and t.provider.waits == []
+    assert not any("🧩" in x for x in t.notifier.sent)
+
+
+async def test_breaker_three_errors_failed_one_summary(tmp_path):
+    t = life(tmp_path, {"A": [900] * 4})
+    for n in (1, 2, 3):
+        t.pages[url_of(f"Ac{n}")] = RuntimeError("Target closed")
+    t.crawler.start()
+    await t.crawler._task
+    assert runs(t)[0].status == "failed" and len(t.crawler.errors) == 3
+    assert search_calls(t, "c4") == 0
+    assert sum("Итог проверки" in x for x in t.notifier.sent) == 1 and "упала" in summary_text(t)
+    with t.sf() as db:
+        cats = db.scalars(select(Category).order_by(Category.id)).all()
+        assert [c.last_status for c in cats] == ["error"] * 3 + [None] and all(c.last_crawled_at is None for c in cats)
+
+
+async def test_crawler_crash_monitor_unaffected(tmp_path):
+    gate = BrowserGate()
+    t = life(tmp_path, {"A": [900]}, gate=gate)
+
+    async def boom(text):
+        raise RuntimeError("telegram упал")
+
+    t.notifier.send_text = boom
+    t.crawler.start()
+    await t.crawler._task  # задача завершилась без исключения
+    assert runs(t)[0].status == "failed" and not gate.locked
+    async with gate.hold():  # мониторинг получает браузер как обычно
+        pass
