@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import sys
 from datetime import datetime, timedelta
@@ -83,7 +84,9 @@ async def main() -> None:
     dp = Dispatcher()
     dp.include_router(build_router(settings.telegram_admin_chat_id, scanner, session_factory, scheduler, crawler))
     log.info("AvitoHunter запущен, интервал %d мин", settings.check_interval_minutes)
-    await notifier.send_text(f"AvitoHunter запущен ✅ Проверка каждые {settings.check_interval_minutes} мин.")
+    every = settings.check_interval_minutes
+    monitor = f"\nМониторинг «{html.escape(rule.name)}»: каждые {every} мин." if rule.enabled else ""
+    await notifier.send_text(f"AvitoHunter запущен ✅ Жми «🔎 Проверить рынок» или /report.{monitor}")
     try:
         await dp.start_polling(bot)
     finally:
