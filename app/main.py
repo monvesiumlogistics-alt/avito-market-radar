@@ -11,7 +11,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import playwright_proxy, settings
 from app.db import init_db, sync_default_rule
 from app.providers.avito_browser import AvitoBrowserProvider
+from app.providers.avito_parser import msk_now
 from app.providers.base import BrowserGate
+from app.providers.traffic import AvitoTraffic
 from app.services.market import MarketCrawler
 from app.services.notifier import TelegramNotifier
 from app.services.panels import startup_text
@@ -67,6 +69,7 @@ async def main() -> None:
     notifier = TelegramNotifier(bot, settings.telegram_admin_chat_id)
     proxy = playwright_proxy(settings.avito_proxy)
     gate = BrowserGate()  # один профиль браузера на мониторинг и проверку рынка
+    traffic = AvitoTraffic(session_factory, settings, clock=msk_now)  # общий темп запросов к Avito (ADR-019)
     scanner = Scanner(
         session_factory,
         lambda: AvitoBrowserProvider(settings.avito_profile_path, settings.headless, proxy),
@@ -76,6 +79,7 @@ async def main() -> None:
         max_pages=settings.max_pages,
         gate=gate,
         premium=settings.premium_emoji,
+        traffic=traffic,
     )
     delay = (settings.page_delay_min, settings.page_delay_max)
     crawler = MarketCrawler(
@@ -84,6 +88,7 @@ async def main() -> None:
         notifier,
         settings,
         gate=gate,
+        traffic=traffic,
     )
     crawler.mark_interrupted()  # прогон, оборванный перезапуском бота, можно продолжить по /report
 

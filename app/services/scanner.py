@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db import ListingRow, WatchRule
 from app.models import Listing, SearchUrl
 from app.providers.base import AvitoProvider, BrowserGate, ProviderBlocked
+from app.providers.traffic import AvitoTraffic, TrafficLimit
 from app.services.matcher import matches
 from app.services.panels import block_alert, block_restored
 
@@ -39,6 +40,7 @@ class Scanner:
         send_delay: float = 1.0,
         gate: BrowserGate | None = None,
         premium: bool = False,
+        traffic: AvitoTraffic | None = None,  # общий темп запросов к Avito (ADR-019)
     ):
         self.session_factory = session_factory
         self.provider_factory = provider_factory
@@ -50,6 +52,7 @@ class Scanner:
         self.send_delay = send_delay
         self.gate = gate
         self.premium = premium  # иконки UnigramIcons в алертах
+        self.traffic = traffic
         self.paused = False  # ponytail: пауза в памяти, после рестарта мониторинг снова идёт
         self.blocked = False
         self.last_run_at: datetime | None = None
@@ -76,6 +79,9 @@ class Scanner:
                 ]
             if not rules:
                 return ["нет правил к проверке"]
+            if self.gate and self.gate.locked:  # идёт проверка рынка: не вытесняем её браузер (ADR-019)
+                log.info("[SCAN] браузер занят проверкой рынка, пропуск")
+                return ["браузер занят проверкой рынка, пропуск"]
             report = []
             hold = self.gate.hold() if self.gate else contextlib.nullcontext()
             try:
@@ -83,12 +89,17 @@ class Scanner:
                     for rule in rules:
                         try:
                             report.append(await self._scan_rule(provider, rule))
-                        except ProviderBlocked:
+                        except (ProviderBlocked, TrafficLimit):
                             raise
                         except Exception as e:
                             log.exception("[SCAN] правило %r упало", rule.name)
                             report.append(f"{rule.name}: ошибка {type(e).__name__}")
+            except TrafficLimit as e:
+                log.warning("[SCAN] лимит Avito на сегодня: %s", e.reason)
+                report.append("лимит запросов к Avito на сегодня исчерпан")
             except ProviderBlocked as e:
+                if self.traffic:
+                    self.traffic.on_block()
                 log.error("[BLOCKED] %s", e)
                 if not self.blocked:
                     await self.notifier.send_text(block_alert(e, self.premium))
@@ -112,6 +123,8 @@ class Scanner:
 
     async def _fetch(self, provider: AvitoProvider, search: SearchUrl, page: int) -> list[Listing]:
         for attempt, delay in enumerate((*self.retry_delays, None), start=1):
+            if self.traffic:
+                await self.traffic.acquire("monitor")
             try:
                 return await provider.search(search, page)
             except ProviderBlocked:

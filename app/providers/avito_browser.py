@@ -42,6 +42,7 @@ class AvitoBrowserProvider(AvitoProvider):
         self._pw: Playwright | None = None
         self._ctx: BrowserContext | None = None
         self._warmed = False
+        self._blocked_tab = None  # вкладка со страницей блока: человек проходит проверку прямо в ней (ADR-019)
 
     async def __aenter__(self) -> "AvitoBrowserProvider":
         self._pw = await async_playwright().start()
@@ -62,6 +63,7 @@ class AvitoBrowserProvider(AvitoProvider):
     async def __aexit__(self, *exc) -> None:
         """Идемпотентен; после выхода экземпляр можно войти заново (свежий warm-up)."""
         ctx, pw, self._ctx, self._pw, self._warmed = self._ctx, self._pw, None, None, False
+        self._blocked_tab = None  # закрывается вместе с контекстом
         if ctx:
             await ctx.close()
         if pw:
@@ -70,11 +72,13 @@ class AvitoBrowserProvider(AvitoProvider):
     async def fetch(self, url: str, ready_selector: str | None = None) -> Page:
         assert self._ctx, "use `async with provider:`"
         tab = await self._ctx.new_page()
+        blocked = False
         try:
             if not self._warmed:
                 # Сразу на выдачу Avito пускает хуже: сначала главная, как обычный человек.
                 resp = await tab.goto(BASE_URL, wait_until="domcontentloaded", timeout=45_000)
                 if status_blocked(resp and resp.status):
+                    blocked = True
                     raise ProviderBlocked(f"Avito: HTTP {resp.status}")
                 await tab.wait_for_timeout(2_000)
                 self._warmed = True
@@ -86,10 +90,17 @@ class AvitoBrowserProvider(AvitoProvider):
                 with contextlib.suppress(PlaywrightTimeout):  # пустая выдача или блок: разберёмся ниже
                     await tab.wait_for_selector(ready_selector, timeout=15_000)
             page = Page(await tab.content(), await tab.title(), tab.url, status)
+            blocked = status_blocked(status) or is_blocked(page.html, page.title)
         finally:
-            await tab.close()
+            if blocked:  # не закрываем: страница блока остаётся на экране для человека, без повторной загрузки
+                old, self._blocked_tab = self._blocked_tab, tab
+                if old is not None:
+                    with contextlib.suppress(Exception):
+                        await old.close()
+            else:
+                await tab.close()
 
-        if status_blocked(status) or is_blocked(page.html, page.title):
+        if blocked:
             self._dump(page.html, "blocked")
             raise ProviderBlocked(f"{page.title or 'Avito: доступ ограничен'} (HTTP {status}, {page.final_url})")
         return page
@@ -97,16 +108,19 @@ class AvitoBrowserProvider(AvitoProvider):
     async def wait_unblocked(self, url: str, timeout_s: float, poll_s: float = 5, cancel=None) -> bool:
         """ADR-005: человек проходит проверку в видимом окне, бот её не решает и не обходит.
 
-        Открываем заблокированный url в отдельной вкладке и опрашиваем её, пока страница не перестанет быть блоком.
-        Срок — по настоящим часам (loop.time), зависший content()/title() ограничен PROBE_TIMEOUT (ADR-007).
+        Опрашиваем вкладку со страницей блока (её оставил fetch) без перезагрузок, пока там не окажется настоящая
+        страница Avito. Вкладки нет — открываем url один раз. Срок — по настоящим часам (loop.time), зависший
+        content()/title() ограничен PROBE_TIMEOUT (ADR-007).
         """
         assert self._ctx, "use `async with provider:`"
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
-        tab = await self._ctx.new_page()
+        tab, self._blocked_tab = self._blocked_tab, None
         try:
-            with contextlib.suppress(Exception):
-                await tab.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            if tab is None:
+                tab = await self._ctx.new_page()
+                with contextlib.suppress(Exception):
+                    await tab.goto(url, wait_until="domcontentloaded", timeout=45_000)
             while loop.time() < deadline:
                 if cancel and cancel():
                     return False
@@ -121,7 +135,8 @@ class AvitoBrowserProvider(AvitoProvider):
                         return True
             return False
         finally:
-            await tab.close()
+            if tab is not None:
+                await tab.close()
 
     async def search(self, search: SearchUrl, page: int = 1) -> list[Listing]:
         fetched = await self.fetch(with_page(search.url, page), SELECTORS["card"][0])

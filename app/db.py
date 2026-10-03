@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, create_engine, inspect, select, text
@@ -192,6 +192,16 @@ class ScanCategory(Base):
     window_hours: Mapped[float]  # какой промежуток времени покрыт прочитанными страницами
     stop_reason: Mapped[str] = mapped_column(String(16))  # known | age_limit | depth_cap | empty | partial
     done: Mapped[bool] = mapped_column(default=True)  # False — прервана: чекпойнт, обход продолжит со следующей стр.
+
+
+class TrafficDay(Base):
+    """Загрузки Avito и события (block/captcha) по суткам и видам: суточный бюджет и телеметрия (ADR-019)."""
+
+    __tablename__ = "avito_traffic"
+
+    day: Mapped[date] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)  # search|card|profile|recheck|monitor|block|captcha
+    count: Mapped[int] = mapped_column(default=0)
 
 
 _ADDED_COLUMNS = (  # (таблица, колонка, тип) — константы, не ввод пользователя

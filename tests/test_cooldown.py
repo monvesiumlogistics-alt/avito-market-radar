@@ -2,8 +2,9 @@
 
 import asyncio
 
-from app.db import CrawlRun
+from app.db import CrawlRun, ScanCategory
 from app.providers.base import ProviderBlocked
+from tests.test_history import counted
 from tests.test_market import life, rows, search_html, url_of
 
 
@@ -21,7 +22,7 @@ def flaky(n_blocks: int, html: str):
 
 
 def cooldown_life(tmp_path, n_blocks, **settings):
-    t = life(tmp_path, {"A": [900]}, captcha_wait_minutes=0, **settings)
+    t = life(tmp_path, {"A": [900]}, **({"captcha_wait_minutes": 0} | settings))
     t.pages[url_of("Ac1")] = flaky(n_blocks, search_html(("A1", "Item A 1", 20000, "1 день назад")))
     t.crawler.cooldown_unit = 0.001  # «минута» паузы в тестах — 1 мс
     return t
@@ -60,17 +61,32 @@ async def test_stop_during_pause(tmp_path):
     assert rows(t, CrawlRun)[0].status == "stopped"
 
 
-async def test_sweep_pause_between_loads(tmp_path, monkeypatch):
-    slept = []
 
-    async def fake_sleep(s):
-        slept.append(s)
+async def test_human_pass_then_quiet_minutes_and_slow_mode(tmp_path):
+    t = cooldown_life(tmp_path, 1, captcha_wait_minutes=15, post_captcha_cooldown_min=5)
+    t.provider.human = True
+    t.crawler.start("sweep")
+    await t.crawler._task
+    assert rows(t, CrawlRun)[0].status == "done"
+    assert t.crawler.traffic.today()["captcha"] == 1 and t.crawler.traffic.slow  # 2 ч в замедленном темпе
 
+
+async def test_blocks_per_day_limit_stops_run(tmp_path):
+    t = cooldown_life(tmp_path, 10, block_cooldowns=5, max_blocks_per_day=2)
+    t.crawler.start("sweep")
+    await t.crawler._task
+    assert rows(t, CrawlRun)[0].status == "blocked"
+    assert len([x for x in t.notifier.sent if x.startswith("⏸")]) == 1  # 1 пауза, 2-й блок — стоп до завтра
+    assert t.crawler.traffic.today()["block"] == 2
+
+
+async def test_large_category_sampled_one_page(tmp_path):
     t = life(tmp_path, {"A": [900]})
-    t.crawler.sweep_pause, t.crawler.kind = 10, "sweep"
-    monkeypatch.setattr("app.services.market.asyncio.sleep", fake_sleep)
-    await t.crawler._sweep_pause()
-    assert len(slept) == 1 and 5 <= slept[0] <= 15  # 10 с ± 50%
-    t.crawler.kind = "report"
-    await t.crawler._sweep_pause()
-    assert len(slept) == 1  # /report — без доп. паузы
+    page = counted(search_html(("A1", "Item A 1", 20000, "1 день назад")), 115000)
+    t.pages[url_of("Ac1")] = page
+    t.pages[url_of("Ac1") + "&p=2"] = page
+    t.crawler.start("sweep")
+    await t.crawler._task
+    (sc,) = rows(t, ScanCategory)
+    assert (sc.pages, sc.stop_reason, sc.total_count) == (1, "sample", 115000)
+    assert url_of("Ac1") + "&p=2" not in t.provider.calls

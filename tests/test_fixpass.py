@@ -258,9 +258,10 @@ class Tab:
     def __init__(self, blocked_for: int = 0, hang: bool = False, after: str = '<html><div data-marker="item">ok</div>'):
         self.left, self.hang, self.closed, self.probes = blocked_for, hang, False, 0
         self.after = after
+        self.gotos = 0
 
     async def goto(self, url, **kw):
-        pass
+        self.gotos += 1
 
     async def content(self):
         if self.hang:
@@ -292,6 +293,15 @@ async def test_wait_unblocked_passes_when_unblocked():
     tab = Tab(blocked_for=2)
     assert await provider_with(tab).wait_unblocked("u", 5, 0.01) is True
     assert tab.probes == 3 and tab.closed
+
+
+async def test_wait_unblocked_uses_blocked_tab_without_reload():
+    """Страница блока осталась открытой (fetch) — ждём человека в ней же, без новой загрузки."""
+    tab, spare = Tab(blocked_for=1), Tab()
+    p = provider_with(spare)
+    p._blocked_tab = tab
+    assert await p.wait_unblocked("u", 5, 0.01) is True
+    assert tab.gotos == 0 and spare.gotos == 0 and tab.closed and p._blocked_tab is None
 
 
 async def test_wait_unblocked_blank_tab_is_not_passed():

@@ -144,19 +144,6 @@ async def test_paused_skips_scheduled_but_not_forced(tmp_path):
     assert t.provider.calls == [1]
 
 
-async def test_scan_waits_gate(tmp_path):
-    gate = BrowserGate()
-    t = setup(tmp_path, gate=gate)
-    t.provider.pages[1] = [make("1")]
-    await gate.acquire()  # проверка рынка держит браузер
-    task = asyncio.create_task(t.scanner.run_watch_rules(force=True))
-    await asyncio.sleep(0.05)
-    assert not task.done() and t.provider.calls == [] and gate.contended
-    gate.release()
-    await task
-    assert t.provider.calls == [1] and not gate.locked and not gate.contended
-
-
 async def test_gate_released_after_block_and_error(tmp_path):
     gate = BrowserGate()
     t = setup(tmp_path, gate=gate)
@@ -182,3 +169,15 @@ async def test_gate_contended_only_while_waiter_exists():
 async def test_provider_fetch_default_not_implemented():
     with pytest.raises(NotImplementedError):
         await FakeProvider().fetch("https://x")
+
+
+async def test_scanner_skips_while_market_run_holds_browser(tmp_path):
+    from app.providers.base import BrowserGate
+
+    gate = BrowserGate()
+    t = setup(tmp_path, gate=gate)
+    t.provider.pages[1] = [make("1")]
+    await gate.acquire()  # идёт проверка рынка
+    assert await t.scanner.run_watch_rules(force=True) == ["браузер занят проверкой рынка, пропуск"]
+    assert t.provider.calls == []
+    gate.release()

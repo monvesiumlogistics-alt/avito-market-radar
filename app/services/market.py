@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import logging
 import math
-import random
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -34,6 +33,7 @@ from app.providers.avito_parser import (
     with_page,
 )
 from app.providers.base import AvitoProvider, BrowserLost, ProviderBlocked
+from app.providers.traffic import AvitoTraffic, TrafficLimit
 from app.services.history import record_card, record_gone, record_search, update_ad
 from app.services.market_cmds import entries_for
 from app.services.market_logic import (
@@ -118,6 +118,7 @@ class MarketCrawler:
         settings: Settings,
         gate=None,  # BrowserGate | None; используется с I10/I11
         clock: Callable[[], datetime] = msk_now,
+        traffic: AvitoTraffic | None = None,  # общий темп запросов к Avito (ADR-019); общий со сканером
     ):
         self.session_factory = session_factory
         self.provider_factory = provider_factory
@@ -138,7 +139,7 @@ class MarketCrawler:
         self.reopen_delay = 2.0  # с до повторного запуска браузера (m10)
         self.cooldown_unit = 60.0  # секунд в «минуте» паузы после блока (в тестах меньше)
         self.cooldown_poll = 5.0  # с между проверками /stop во время паузы
-        self.sweep_pause = settings.sweep_pause_seconds
+        self.traffic = traffic or AvitoTraffic(session_factory, settings, clock)
         self.blocks = 0  # пауз после блока в этом прогоне
         self._task: asyncio.Task | None = None
         self._owns_gate = False
@@ -360,7 +361,10 @@ class MarketCrawler:
                 raise BudgetExhausted
             self._current = current_label(cat.section, cat.name)
             try:
-                await self._collect(cat.id, cat.url, cat.name, max_pages=depth, start_page=start, known_stop=True)
+                await self._collect(
+                    cat.id, cat.url, cat.name, max_pages=depth, start_page=start, known_stop=True,
+                    sample_total=s.sweep_large_total,
+                )  # fmt: skip
                 streak = 0
             except (StopRequested, BudgetExhausted, ProviderBlocked):
                 self._save(None)
@@ -536,26 +540,29 @@ class MarketCrawler:
         note = STATUS_NOTES.get(status, "").replace("/report", "/sweep") or None
         return format_sweep_summary(
             f"{self.clock():%d.%m}", rows, len(names), self._quiet, self.loads, self.captcha_waits, self.errors,
-            status, note, self.settings.premium_emoji, pauses=self.blocks,
+            status, note, self.settings.premium_emoji, pauses=self.blocks, traffic=self.traffic.summary(),
         )  # fmt: skip
 
     # --- загрузки ---
 
-    async def _before_load(self) -> None:
-        """Единственная точка перед каждой загрузкой: стоп, бюджет, уступка браузера, счётчик (M2)."""
+    async def _before_load(self, kind: str = "search") -> None:
+        """Единственная точка перед каждой загрузкой: стоп, бюджет прогона, уступка браузера, общий темп Avito
+        (интервал, час, сутки, лимит блоков — ADR-019), счётчик (M2)."""
         if self.stop_requested:
             raise StopRequested
         if self.loads >= self.budget:
             raise BudgetExhausted
         if self.gate and self.gate.contended:
             await self._handover()
-        await self._sweep_pause()
+        try:
+            ok = await self.traffic.acquire(kind, lambda: self.stop_requested)
+        except TrafficLimit as e:
+            if e.reason == "blocks":
+                raise ProviderBlocked("Avito ограничивал доступ слишком часто сегодня — продолжу завтра") from e
+            raise BudgetExhausted from e
+        if not ok:
+            raise StopRequested
         self.loads += 1
-
-    async def _sweep_pause(self) -> None:
-        """Обход идёт фоном: ровный медленный темп вместо пачек — реже упираемся в лимит Avito (ADR-018)."""
-        if self.kind == "sweep" and self.sweep_pause > 0:
-            await asyncio.sleep(self.sweep_pause * random.uniform(0.5, 1.5))
 
     async def _open_provider(self) -> AvitoProvider:
         """Запуск браузера; один повтор через паузу: профиль после close() иногда ещё занят (m10)."""
@@ -589,35 +596,43 @@ class MarketCrawler:
             raise BrowserLost(f"{type(e).__name__}: {e}") from e
         self.loads += 1
 
-    async def _fetch(self, url: str, ready_selector: str | None = None):
-        """Блок: сначала человек (капча, ADR-005); не прошёл/нечего проходить — пауза и повтор без человека
-        (BLOCK_COOLDOWNS раз, каждая пауза вдвое длиннее, ADR-018); потом ProviderBlocked -> «blocked»."""
-        await self._before_load()
+    async def _fetch(self, url: str, ready_selector: str | None = None, kind: str = "search"):
+        """Блок: стоп всех загрузок; сначала человек (капча, ADR-005) → 5 мин тишины и замедленный темп; нет человека —
+        пауза 60/120 мин и повтор (ADR-018); MAX_BLOCKS_PER_DAY блоков за сутки → ProviderBlocked, стоп до завтра."""
+        await self._before_load(kind)
         pauses = 0
         while True:
             try:
                 return await self._timed_fetch(url, ready_selector)
             except ProviderBlocked as e:
-                if not await self._wait_for_human(url, e):
-                    if pauses >= self.settings.block_cooldowns:
-                        raise
+                if self.traffic.on_block():
+                    raise ProviderBlocked(f"{e} — лимит блоков на сутки, продолжу завтра") from e
+                if await self._wait_for_human(url, e):
+                    minutes = self.traffic.on_human_passed() / 60
+                    await self._idle(minutes, "⏳ после капчи — пауза", note=None)
+                elif pauses >= self.settings.block_cooldowns:
+                    raise
+                else:
                     await self._cooldown(pauses)
                     pauses += 1
-                elif pauses > self.settings.block_cooldowns:  # человек «прошёл», а блок снова: не крутиться вечно
-                    raise
-            await self._before_load()
+                    self.traffic.on_pause_done()
+            await self._before_load(kind)
 
     async def _cooldown(self, n: int) -> None:
-        """Пауза после блока: браузер остаётся открытым, /stop работает. ponytail: замок браузера держится всю паузу,
-        мониторинг ждёт — он выключен; отдавать замок, если мониторинг вернётся."""
+        """Пауза после блока без человека (ADR-018)."""
         minutes = self.settings.block_cooldown_minutes * 2**n
         self.blocks += 1
         until = self.clock() + timedelta(minutes=minutes)
         log.warning("[MARKET] блок без капчи: пауза %d мин", minutes)
-        await self.notifier.send_text(
-            f"⏸ Avito ограничил доступ. Пауза <code>{minutes}</code> мин, продолжу сам в {until:%H:%M}"
-        )
-        before, self._current = self._current, f"⏸ пауза после блока до {until:%H:%M}"
+        note = f"⏸ Avito ограничил доступ. Пауза <code>{minutes}</code> мин, продолжу сам в {until:%H:%M}"
+        await self._idle(minutes, f"⏸ пауза после блока до {until:%H:%M}", note)
+
+    async def _idle(self, minutes: float, label: str, note: str | None) -> None:
+        """Ни одной загрузки minutes минут: браузер открыт, /stop работает. ponytail: замок браузера держится всю
+        паузу, мониторинг ждёт — он выключен; отдавать замок, если мониторинг вернётся."""
+        if note:
+            await self.notifier.send_text(note)
+        before, self._current = self._current, label
         await self._send_progress(force=True)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + minutes * self.cooldown_unit
@@ -685,7 +700,7 @@ class MarketCrawler:
             if self.loads >= self.budget:
                 break  # перепроверка не съедает бюджет обхода целиком: на обход остаётся только то, что осталось
             try:
-                res = await self._fetch(url, SELECTORS["item_views"][0])
+                res = await self._fetch(url, SELECTORS["item_views"][0], "recheck")
                 gone = is_gone(res.html, res.title, res.status)
                 st = None if gone else parse_item_page(res.html)
             except (StopRequested, BudgetExhausted, ProviderBlocked, BrowserLost):
@@ -782,6 +797,7 @@ class MarketCrawler:
         max_pages: int | None = None,
         start_page: int = 1,
         known_stop: bool = False,
+        sample_total: int | None = None,
     ) -> tuple[list[Listing], float]:
         """Листает выдачу по дате; возвращает кандидатов и сколько дней из max_age покрыто.
         Каждая прочитанная страница сразу пишется в историю и чекпойнт (ADR-015/016): прерывание не теряет увиденное.
@@ -829,6 +845,9 @@ class MarketCrawler:
                     found.setdefault(c.external_id, c)
             if old:
                 full, stop = True, "age_limit"
+                break
+            if sample_total and total and total >= sample_total:
+                stop = "sample"  # огромная категория: 1-я страница = свежие модели + total + темп (ADR-019)
                 break
             if known_stop and n + k and k / (n + k) >= s.sweep_known_stop:
                 stop = "known"  # дальше — уже виденное в прошлых обходах
@@ -913,7 +932,7 @@ class MarketCrawler:
         """Opened; 'old' — дата на странице старше недели; 'error' — не открылась; None — пропущена (нет счётчика)."""
         now, s = self.clock(), self.settings
         try:
-            res = await self._fetch(card.url, SELECTORS["item_views"][0])
+            res = await self._fetch(card.url, SELECTORS["item_views"][0], "card")
             st = parse_item_page(res.html)
             if st.views is None:
                 log.warning("[MARKET] нет счётчика просмотров: %s", card.url)
@@ -939,7 +958,7 @@ class MarketCrawler:
     async def _seller_date(self, o: Opened) -> datetime | None:
         """Дата объявления в профиле продавца; None — не удалось (карточка остаётся «дата не проверена», AC-3.4)."""
         try:
-            res = await self._fetch(o.seller_url, SELECTORS["profile_item"][0])
+            res = await self._fetch(o.seller_url, SELECTORS["profile_item"][0], "profile")
             text = parse_seller_date(res.html, o.card.external_id)
             date = parse_published(text, self.clock(), absolute_time=True)
             if date:

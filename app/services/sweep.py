@@ -19,7 +19,9 @@ RATE_SCANS = 7  # по скольким последним обходам кат
 QUIET_REVISIT_HOURS = 36  # тихую категорию, обойдённую позже этого, сегодня пропускаем
 DONE_STATUSES = ("done", "budget")  # такой обход за сегодня — повторять не нужно
 
-STOP_LABELS = {"known": "знакомые", "age_limit": "неделя", "depth_cap": "лимит глубины", "empty": "пусто"}
+STOP_LABELS = {
+    "known": "знакомые", "age_limit": "неделя", "depth_cap": "лимит глубины", "empty": "пусто", "sample": "выборка",
+}
 
 
 def rate_per_hour(scans: Sequence) -> float | None:
@@ -32,6 +34,8 @@ def plan_depth(rate: float | None, hours_since: float | None, s: Settings) -> in
     """Сколько страниц читать: ожидаемое число новых с прошлого обхода / 50 × запас + 1 страница на стык."""
     if rate is None or hours_since is None:
         return s.sweep_first_pages
+    if rate * 24 > s.sweep_large_per_day:
+        return 1  # огромная категория: только выборка 1-й страницы (ADR-019)
     pages = math.ceil(rate * hours_since / PAGE_SIZE * DEPTH_MARGIN) + 1
     return max(2, min(s.sweep_max_pages, pages))
 
@@ -69,6 +73,7 @@ def format_sweep_summary(
     note: str | None = None,
     premium: bool = False,
     pauses: int = 0,
+    traffic: str | None = None,
 ) -> str:
     """rows: ScanCategory за прогон с именем категории (.name). Телеметрия обхода одним сообщением."""
     stops = Counter(r.stop_reason for r in rows)
@@ -86,6 +91,8 @@ def format_sweep_summary(
         lines.append(f"🧩 Капча: <code>{captcha_waits}</code>")
     if pauses:
         lines.append(f"⏸ Пауз после блока: <code>{pauses}</code>")
+    if traffic:
+        lines.append(traffic)
     if errors:
         lines.append(f"{icon('❗️', premium)} Ошибок: <code>{len(errors)}</code>")
     short = sorted((r for r in rows if r.stop_reason == "depth_cap"), key=lambda r: r.window_hours)

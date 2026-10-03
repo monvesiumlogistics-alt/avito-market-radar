@@ -29,10 +29,11 @@ def test_rate_per_hour_is_median_of_recent_scans():
 
 def test_plan_depth_by_expected_new_listings():
     assert plan_depth(None, None, S) == S.sweep_first_pages  # истории нет
-    assert plan_depth(10, 24, S) == 8  # 240 новых ≈ 4.8 стр. × 1.3 запас → 7, +1 на стык
+    assert plan_depth(2, 24, S) == 3  # 48 новых ≈ 1 стр. × 1.3 запас → 2, +1 на стык
+    assert plan_depth(5, 24, S) == S.sweep_max_pages == 4  # 120 новых → потолок обычной категории
     assert plan_depth(0.5, 24, S) == 2
     assert plan_depth(0.01, 24, S) == 2  # минимум: страница + стык
-    assert plan_depth(100, 24, S) == S.sweep_max_pages
+    assert plan_depth(10, 24, S) == 1  # 240/сут > 150 — огромная: только 1-я страница (выборка)
 
 
 def test_quiet_category_swept_every_other_day():

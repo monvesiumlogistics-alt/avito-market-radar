@@ -16,6 +16,9 @@ NOW = datetime(2026, 10, 3, 12, 0)
 CAT_URL = "https://www.avito.ru/all/muzykalnye_instrumenty/akkordeony-ASgB"
 FIXTURES = Path(__file__).parent / "fixtures"
 THREE_DAYS = "30 сентября в 12:00"  # возраст 3 дня
+# без пауз после блока и без общего темпа Avito: их проверяют test_cooldown / test_traffic
+FAST = {"block_cooldowns": 0, "avito_min_interval_s": 0, "avito_max_per_hour": 10**6, "avito_daily_budget": 10**6,
+        "max_blocks_per_day": 10**6, "post_captcha_cooldown_min": 0}  # fmt: skip
 
 
 def search_url(page: int = 1) -> str:
@@ -101,7 +104,7 @@ class FakeNotifier:
 
 def setup(tmp_path, pages: dict, seed: bool = True, **settings):
     sf = init_db(f"sqlite:///{tmp_path}/t.db")
-    settings.setdefault("block_cooldowns", 0)  # паузы после блока проверяются в test_cooldown
+    settings = FAST | settings
     s = Settings(_env_file=None, **settings)
     with sf() as db:
         cat = Category(section="muzykalnye_instrumenty", name="Аккордеоны", url=CAT_URL, discovered_at=NOW)
@@ -464,7 +467,7 @@ class RecNotifier:
 def life(tmp_path, cats: dict[str, list[int]], gate=None, **settings):
     """cats: раздел -> просмотры карточки по подкатегориям (у каждой одна карточка с находкой)."""
     sf = init_db(f"sqlite:///{tmp_path}/t.db")
-    settings.setdefault("block_cooldowns", 0)
+    settings = FAST | settings
     s = Settings(_env_file=None, report_sections=",".join(cats), check_seller_date=False, **settings)
     pages: dict = {}
     with sf() as db:
@@ -481,7 +484,6 @@ def life(tmp_path, cats: dict[str, list[int]], gate=None, **settings):
     t.notifier = RecNotifier(provider.events)
     t.crawler = MarketCrawler(sf, lambda: provider, t.notifier, s, gate=gate, clock=lambda: t.now[0])
     t.crawler.send_delay = 0
-    t.crawler.sweep_pause = 0
     return t
 
 

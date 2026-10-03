@@ -64,15 +64,28 @@ class Settings(BaseSettings):
     daily_sweep_at: str = "09:00"  # МСК; "" — без расписания (только /sweep)
     sweep_budget: int = 800  # загрузок на обход
     sweep_first_pages: int = 3  # страниц для категории без истории
-    sweep_max_pages: int = 10
+    sweep_max_pages: int = 4
     sweep_known_stop: float = 0.85  # стоп, когда такая доля непромо-объявлений страницы уже знакома
     sweep_quiet_per_day: int = 25  # тише — категория обходится через день
     # Блок без капчи (HTTP 429/439, «проблема с IP»): пауза и продолжение без человека (ADR-018)
-    block_cooldowns: int = 3  # сколько пауз подряд, каждая вдвое длиннее; 0 — сразу «blocked»
+    block_cooldowns: int = 2  # сколько пауз подряд, каждая вдвое длиннее; 0 — сразу «blocked»
     block_cooldown_minutes: int = 60
-    sweep_pause_seconds: float = 10  # доп. пауза перед каждой загрузкой обхода (±50%): ровный темп
+    # Темп запросов к Avito — одна точка для всех (ADR-019, docs/avito-traffic-v2.md)
+    avito_min_interval_s: float = 45  # не чаще раза в столько секунд (±50%)
+    avito_max_per_hour: int = 60
+    avito_daily_budget: int = 450  # загрузок страниц в сутки на всё вместе
+    max_blocks_per_day: int = 3  # после стольких блоков за сутки — стоп до завтра
+    post_captcha_cooldown_min: float = 5  # после капчи столько минут без загрузок
+    slow_factor: float = 2  # после капчи/паузы интервал ×2 ...
+    slow_hours: float = 2  # ... на столько часов
+    sweep_large_total: int = 20000  # категория больше — обход берёт только 1-ю страницу (выборка)
+    sweep_large_per_day: int = 150  # новых в сутки больше — тоже выборка
     page_delay_min: float = 2
     page_delay_max: float = 5
+
+    # Официальный Avito API для бизнеса (свои объявления и их статистика), scripts/avito_api_probe.py
+    avito_client_id: str = ""
+    avito_client_secret: str = ""
 
     database_url: str = "sqlite:///./data/app.db"
     log_level: str = "INFO"
