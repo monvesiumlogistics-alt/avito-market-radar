@@ -1,6 +1,6 @@
 import asyncio
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -82,15 +82,15 @@ class FakeNotifier:
         pass
 
 
-def setup(tmp_path, pages: dict, **settings):
+def setup(tmp_path, pages: dict, seed: bool = True, **settings):
     sf = init_db(f"sqlite:///{tmp_path}/t.db")
     s = Settings(_env_file=None, **settings)
     with sf() as db:
         cat = Category(section="muzykalnye_instrumenty", name="Аккордеоны", url=CAT_URL, discovered_at=NOW)
         run = CrawlRun(started_at=NOW)
-        db.add_all([cat, run])
+        db.add_all([cat, run] if seed else [run])
         db.commit()
-        cat_id, run_id = cat.id, run.id
+        cat_id, run_id = (cat.id if seed else None), run.id
     crawler = MarketCrawler(sf, lambda: None, FakeNotifier(), s, clock=lambda: NOW)
     crawler.provider, crawler.run_id = FakeProvider(pages), run_id
     return SimpleNamespace(sf=sf, crawler=crawler, cat_id=cat_id, run_id=run_id, provider=crawler.provider)
@@ -359,3 +359,64 @@ async def test_budget_and_block_propagate_and_persist_loads(tmp_path):
     assert t.crawler.errors == [] and cat_row(t).last_status is None
     with t.sf() as db:
         assert db.get(CrawlRun, t.run_id).loads == 1
+
+
+# --- разделы (I9b) ---
+
+SECTION = "muzykalnye_instrumenty"
+SECTION_URL = f"https://www.avito.ru/rossiya/{SECTION}"
+SECTION_HTML = (FIXTURES / "market_section.html").read_text(encoding="utf-8")
+
+
+def discovery(tmp_path, **settings):
+    return setup(tmp_path, {SECTION_URL: SECTION_HTML}, seed=False, report_sections=SECTION, **settings)
+
+
+async def test_discover_upsert_no_duplicates_on_rerun(tmp_path):
+    t = discovery(tmp_path)
+    await t.crawler.discover_sections()
+    first = {c.url: c.id for c in rows(t, Category)}
+    assert len(first) == 8 and all(c.section == SECTION and c.last_crawled_at is None for c in rows(t, Category))
+    # раздел устарел -> перечитывается, дублей нет, id и история обхода сохраняются
+    with t.sf() as db:
+        for c in db.scalars(select(Category)):
+            c.discovered_at = datetime(2026, 8, 1)
+            c.last_best_vpd = 77
+        db.commit()
+    await t.crawler.discover_sections()
+    again = rows(t, Category)
+    assert {c.url: c.id for c in again} == first and all(
+        c.discovered_at == NOW and c.last_best_vpd == 77 for c in again
+    )
+
+
+async def test_refresh_30d_fresh_not_reloaded_stale_reloaded(tmp_path):
+    t = discovery(tmp_path)
+    await t.crawler.discover_sections()
+    await t.crawler.discover_sections()  # свежие (только что найдены) — не грузим
+    assert t.provider.calls == [SECTION_URL]
+    with t.sf() as db:
+        for c in db.scalars(select(Category)):
+            c.discovered_at = NOW - timedelta(days=31)
+        db.commit()
+    await t.crawler.discover_sections()
+    assert t.provider.calls == [SECTION_URL, SECTION_URL]
+
+
+async def test_max_subcats_and_loads_counted(tmp_path):
+    t = discovery(tmp_path, report_max_subcats=3)
+    await t.crawler.discover_sections()
+    assert len(rows(t, Category)) == 3 and t.crawler.loads == 1
+    with t.sf() as db:
+        assert db.get(CrawlRun, t.run_id).loads == 1
+
+
+async def test_discover_error_skipped_other_sections_continue(tmp_path):
+    t = setup(
+        tmp_path,
+        {SECTION_URL: SECTION_HTML, "https://www.avito.ru/rossiya/telefony": RuntimeError("x")},
+        seed=False,
+        report_sections=f"telefony,{SECTION}",
+    )
+    await t.crawler.discover_sections()
+    assert len(rows(t, Category)) == 8 and len(t.crawler.errors) == 1

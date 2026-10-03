@@ -7,17 +7,20 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from app.config import Settings
+from app.config import Settings, split_csv
 from app.db import Category, CrawlRun, Find
 from app.models import Listing
 from app.providers.avito_parser import (
+    BASE_URL,
     SELECTORS,
     parse_item_page,
     parse_published,
     parse_search_html,
     parse_seller_date,
+    parse_subcategories,
     promoted_ids,
     with_page,
 )
@@ -36,6 +39,7 @@ from app.services.market_logic import (
 
 log = logging.getLogger(__name__)
 
+SUBCAT_REFRESH = timedelta(days=30)  # подкатегории раздела перечитываем не чаще
 FETCH_TIMEOUT = 120  # с на одну загрузку: зависший Playwright не должен держать браузер (m9)
 
 
@@ -103,6 +107,37 @@ class MarketCrawler:
         await self._before_load()
         async with asyncio.timeout(self.fetch_timeout):
             return await self.provider.fetch(url, ready_selector)
+
+    # --- разделы ---
+
+    async def discover_sections(self) -> None:
+        """Подкатегории разделов со страницы раздела: upsert, перечитывание не чаще раза в 30 дней (AC-2.1)."""
+        s, now = self.settings, self.clock()
+        for section in split_csv(s.report_sections):
+            with self.session_factory() as db:
+                known = db.scalars(select(Category.discovered_at).where(Category.section == section)).all()
+            if known and max(known) > now - SUBCAT_REFRESH:
+                continue
+            try:
+                res = await self._fetch(f"{BASE_URL}/rossiya/{section}", SELECTORS["subcat"][0])
+                subs = parse_subcategories(res.html, section, s.report_max_subcats)
+            except (StopRequested, BudgetExhausted, ProviderBlocked):
+                raise
+            except Exception as e:
+                log.exception("[MARKET] раздел %s: не удалось прочитать подкатегории", section)
+                self.errors.append(f"раздел {section}: {type(e).__name__}: {e}")
+                continue
+            if not subs:
+                log.warning("[MARKET] раздел %s: подкатегорий не найдено (проверь SELECTORS)", section)
+            with self.session_factory() as db:
+                by_url = {c.url: c for c in db.scalars(select(Category).where(Category.section == section))}
+                for name, url in subs:
+                    cat = by_url.get(url) or Category(section=section, url=url)
+                    cat.name, cat.discovered_at = name, now
+                    db.add(cat)
+                run = db.get(CrawlRun, self.run_id)
+                run.loads = self.loads
+                db.commit()
 
     # --- подкатегория ---
 

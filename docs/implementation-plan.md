@@ -93,7 +93,7 @@ real deps: I3←I1 · I5←I4 · I7←I6 · I9←I2,I3,I4,I7 · I9b←I2,I3,I9 �
 
 ## Iteration 9b: discover_sections  (S)
 **Modify**: `market.py` (`discover_sections()`: upsert `categories`, refresh when older than 30 days, `REPORT_MAX_SUBCATS`, loads via `_before_load`), `tests/test_market.py`.
-**Done**: [ ] test_discover_upsert (no duplicates on rerun) [ ] test_refresh_30d (fresh not reloaded, stale reloaded) [ ] test_max_subcats [ ] discovery loads counted in `run.loads` [ ] gate.
+**Done**: [x] test_discover_upsert (no duplicates on rerun) [x] test_refresh_30d (fresh not reloaded, stale reloaded) [x] test_max_subcats [x] discovery loads counted in `run.loads` [x] gate.
 **Depends**: 2,3,9 · **Risk**: low.
 
 ## Iteration 10: Run lifecycle and messaging  (M–L)
