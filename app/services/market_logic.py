@@ -4,7 +4,6 @@ import html
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from itertools import groupby
-from math import inf
 
 from app.config import Settings
 from app.db import Category, Find
@@ -80,9 +79,12 @@ def is_hot(vpd: int, s: Settings) -> bool:
     return vpd >= s.vpd_hot
 
 
+NEVER_CRAWLED = 1e9  # выше любого «дней с обхода × вес»; внутри — по prior_score из карты
+
+
 def _priority(cat: Category, now: datetime) -> float:
     if cat.last_crawled_at is None:
-        return inf
+        return NEVER_CRAWLED + (cat.prior_score or 0)
     days = (now - cat.last_crawled_at).total_seconds() / 86400
     return days * (1 + min(cat.last_best_vpd or 0, 500) / 100)
 

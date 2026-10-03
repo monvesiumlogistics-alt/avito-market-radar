@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, create_engine, select
+from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, create_engine, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from app.config import Settings, split_csv
@@ -67,6 +67,7 @@ class Category(Base):
     last_best_vpd: Mapped[int | None]
     last_status: Mapped[str | None] = mapped_column(String(16))  # ok | error
     last_days_covered: Mapped[float | None]
+    prior_score: Mapped[float | None]  # стартовый приоритет из карты (catalog.csv), пока не обходили
 
 
 class CrawlRun(Base):
@@ -114,6 +115,9 @@ def init_db(url: str) -> sessionmaker:
         Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(url)
     Base.metadata.create_all(engine)  # ponytail: create_all без миграций, Alembic при переходе на PostgreSQL
+    if "prior_score" not in {c["name"] for c in inspect(engine).get_columns("categories")}:
+        with engine.begin() as conn:  # create_all не меняет существующие таблицы
+            conn.execute(text("ALTER TABLE categories ADD COLUMN prior_score FLOAT"))
     return sessionmaker(engine, expire_on_commit=False)
 
 

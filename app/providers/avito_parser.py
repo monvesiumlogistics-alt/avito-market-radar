@@ -257,7 +257,11 @@ def promoted_ids(html: str) -> set[str]:
 
 
 def parse_subcategories(html: str, section: str, limit: int) -> list[tuple[str, str]]:
-    """Подкатегории со страницы раздела: [(название, url)], не больше limit. Ссылки /all/<section>/<sub>-<hash>."""
+    """Подкатегории со страницы раздела: [(название, url)], не больше limit. Ссылки /all/<section>/<sub>-<hash>.
+
+    Если рубрикатора нет (у ноутбуков, ремонта, мебели там бренды/типы в другой вёрстке) — запасной путь из
+    catalog.js: любые ссылки /<x>/<section>/<sub>, не объявления, текст короче 40, адрес приводится к /rossiya/.
+    """
     soup = BeautifulSoup(html, "html.parser")
     seen: dict[str, str] = {}
     for a in soup.select(SELECTORS["subcat"][0]):
@@ -265,4 +269,17 @@ def parse_subcategories(html: str, section: str, limit: int) -> list[tuple[str, 
         name = a.get_text(" ", strip=True)
         if len(parts) == 3 and parts[1] == section and name:
             seen.setdefault(normalize_url(a["href"]), name)
+    if not seen:
+        for a in soup.find_all("a", href=True):
+            parts = [p for p in urlsplit(a["href"]).path.split("/") if p]
+            name = a.get_text(" ", strip=True)
+            if (
+                len(parts) == 3
+                and parts[1] == section
+                and re.fullmatch(r"[a-z_-]+", parts[0])
+                and not re.search(r"_\d{7,}$", parts[2])
+                and name
+                and len(name) < 40
+            ):
+                seen.setdefault(normalize_url(f"/rossiya/{section}/{parts[2]}"), name)
     return [(name, url) for url, name in list(seen.items())[:limit]]

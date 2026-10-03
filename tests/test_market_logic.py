@@ -85,9 +85,11 @@ def test_is_find_is_hot():
     assert not is_find(80, 10000, 7.5, S)
 
 
-def cat(i: int, section: str, crawled_days: float | None = None, vpd: int | None = None, run: int | None = None):
+def cat(
+    i: int, section: str, crawled_days: float | None = None, vpd: int | None = None, run: int | None = None, prior=None
+):
     crawled = NOW - timedelta(days=crawled_days) if crawled_days is not None else None
-    return NS(id=i, section=section, last_run_id=run, last_best_vpd=vpd, last_crawled_at=crawled)
+    return NS(id=i, section=section, last_run_id=run, last_best_vpd=vpd, last_crawled_at=crawled, prior_score=prior)
 
 
 def test_crawl_order():
@@ -176,3 +178,14 @@ def test_split_message_chunks_and_tags():
     assert all(c.count("<a ") == c.count("</a>") for c in chunks)
     assert split_message("short") == ["short"]
     assert all(len(c) <= 100 for c in split_message("y" * 250, 100))
+
+
+def test_crawl_order_never_crawled_by_prior_score():
+    cats = [
+        cat(1, "A", prior=10),
+        cat(2, "A", prior=500),
+        cat(3, "B", prior=100),
+        cat(4, "B", None),  # без оценки — последним среди необойдённых
+        cat(5, "C", 40),  # уже обходили: после всех необойдённых
+    ]
+    assert [c.id for c in crawl_order(cats, run_id=1, now=NOW)] == [2, 1, 3, 4, 5]

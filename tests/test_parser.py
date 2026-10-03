@@ -162,3 +162,25 @@ def test_parse_seller_date():
     assert parse_seller_date(html, "8134124978") == "23 июня 12:08"
     assert parse_seller_date(html, "1") is None
     assert parse_seller_date("<html></html>", "8427557978") is None
+
+
+def test_parse_subcategories_fallback_without_rubricator():
+    html = (
+        "<html><body>"
+        '<a href="/all/noutbuki/apple-ASgB?cd=1">Apple</a>'
+        '<a href="https://www.avito.ru/moskva/noutbuki/asus-ASgC">ASUS</a>'
+        '<a href="/all/noutbuki/apple-ASgB">Apple дубль</a>'
+        '<a href="/moskva/noutbuki/noutbuk_asus_1234567890">Объявление</a>'
+        '<a href="/all/noutbuki/dlinnoe">' + "Очень длинное название подкатегории раздела" + "</a>"
+        '<a href="/all/telefony/apple-ASgD">Чужой раздел</a>'
+        '<a href="/all/noutbuki/a/b">Глубже</a>'
+        '<a href="/all/noutbuki/hp-ASgE">HP</a>'
+        "</body></html>"
+    )
+    subs = parse_subcategories(html, "noutbuki", 18)
+    assert subs == [
+        ("Apple", "https://www.avito.ru/rossiya/noutbuki/apple-ASgB"),
+        ("ASUS", "https://www.avito.ru/rossiya/noutbuki/asus-ASgC"),
+        ("HP", "https://www.avito.ru/rossiya/noutbuki/hp-ASgE"),
+    ]
+    assert len(parse_subcategories(html, "noutbuki", 2)) == 2
