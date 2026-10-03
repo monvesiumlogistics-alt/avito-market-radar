@@ -511,7 +511,7 @@ async def test_start_new(tmp_path):
     (run,) = runs(t)
     assert run.status == "done" and run.finished_at and run.finds_count == 1
     assert run.loads == t.crawler.loads == 4  # warm-up + выдача (2 стр.) + карточка
-    assert t.notifier.sent[0].startswith("⏳ Проверка рынка") and "Итог проверки" in summary_text(t)
+    assert t.notifier.sent[0].startswith("<b>⏳ Проверка рынка") and "Итог проверки" in summary_text(t)
     assert not t.crawler.running
 
 
@@ -519,7 +519,7 @@ async def test_already_running_shows_progress(tmp_path):
     t = life(tmp_path, {"A": [900]})
     t.crawler.start()
     again = t.crawler.start()
-    assert again.startswith("Проверка уже идёт\n⏳ Проверка рынка — 00:00")
+    assert again.startswith("Проверка уже идёт\n<b>⏳ Проверка рынка</b>\n<code>[□")
     await t.crawler._task
     assert len(runs(t)) == 1
 
@@ -560,7 +560,7 @@ async def test_resume_lt_12h_no_repeats(tmp_path):
     (run,) = runs(t)
     assert run.status == "done" and run.finds_count == 2 and run.loads > 5
     assert search_calls(t, "c1") == 2  # две страницы выдачи в первом заходе, при продолжении не открывалась
-    assert sum(1 for x in t.notifier.sent if x.startswith("⏳")) == 2  # на продолжении новое сообщение о прогрессе
+    assert sum(1 for x in t.notifier.sent if x.startswith("<b>⏳")) == 2  # на продолжении новое сообщение о прогрессе
 
 
 async def test_new_run_gt_12h(tmp_path):
@@ -576,9 +576,10 @@ async def test_progress_once_per_minute(tmp_path):
     hook(t, url_of("Ac2"), lambda: t.now.__setitem__(0, NOW + timedelta(seconds=61)))
     t.crawler.start()
     await t.crawler._task
-    assert sum(1 for x in t.notifier.sent if x.startswith("⏳")) == 1
-    assert len(t.notifier.edits) == 2 and t.notifier.edits[0][1].startswith("⏳")  # до c2 тихо, после c2 одна правка
-    assert t.notifier.edits[-1][1].startswith("✅ Проверка завершена — 01:01")  # и итоговый заголовок
+    assert sum(1 for x in t.notifier.sent if x.startswith("<b>⏳")) == 1
+    assert len(t.notifier.edits) == 2 and t.notifier.edits[0][1].startswith("<b>⏳")  # до c2 тихо, после c2 одна правка
+    last = t.notifier.edits[-1][1]
+    assert last.startswith("<b>✅ Проверка завершена</b>") and "⏱ 01:01 прошло" in last
 
 
 async def test_portion_after_section_and_final_sorted(tmp_path):
@@ -835,15 +836,15 @@ async def test_progress_final_headers_and_current_states(tmp_path):
     hook(t, url_of("Ac2"), lambda: seen.append(t.crawler._progress_text()))
     t.crawler.start()
     await t.crawler._task
-    assert "Сейчас: 📦 A — A 2" in seen[0]  # во время обхода подкатегории
-    assert t.notifier.edits[-1][1].split("\n")[0].startswith("✅ Проверка завершена — ")
+    assert "📦 A — A 2" in seen[0]  # во время обхода подкатегории
+    assert t.notifier.edits[-1][1].split("\n")[0] == "<b>✅ Проверка завершена</b>"
     t = await _stopped_run(tmp_path / "s")
-    assert t.notifier.edits[-1][1].startswith("⏹ Остановлено")
+    assert t.notifier.edits[-1][1].startswith("<b>⏹ Остановлено</b>")
     t = life(tmp_path / "b", {"A": [900, 900]})
     break_page(t, "Ac2")
     t.crawler.start()
     await t.crawler._task
-    assert t.notifier.edits[-1][1].startswith("⚠️ Блок Avito")
+    assert t.notifier.edits[-1][1].startswith("<b>⚠️ Блок Avito</b>")
 
 
 async def test_progress_captcha_state_and_recheck_state(tmp_path):
@@ -858,7 +859,7 @@ async def test_progress_captcha_state_and_recheck_state(tmp_path):
     break_page(t, "Ac1", times=1)
     t.crawler.start()
     await t.crawler._task
-    assert "Сейчас: 🧩 жду проверку капчи" in states[0] and "Сейчас: 🧩" not in t.crawler._progress_text()
+    assert "🧩 жду проверку капчи" in states[0] and "🧩 жду" not in t.crawler._progress_text()
     assert any("🧩 жду проверку капчи" in text for _, text in t.notifier.edits)  # сообщение правится сразу
     t = life(tmp_path / "r", {"A": [900]})
     with t.sf() as db:
@@ -872,7 +873,7 @@ async def test_progress_captcha_state_and_recheck_state(tmp_path):
     seen_text: list[str] = []
     t.crawler.start()
     await t.crawler._task
-    assert "Сейчас: перепроверка находок" in seen_text[0]
+    assert "перепроверка находок" in seen_text[0]
 
 
 async def test_progress_ticker_edits_during_long_subcategory_and_skips_unchanged(tmp_path):
@@ -890,6 +891,6 @@ async def test_progress_ticker_edits_during_long_subcategory_and_skips_unchanged
     t.crawler.provider_factory = lambda: slow
     t.crawler.start()
     await t.crawler._task
-    live = [x for _, x in t.notifier.edits if x.startswith("⏳")]
+    live = [x for _, x in t.notifier.edits if x.startswith("<b>⏳")]
     assert len(live) >= 3 and len(set(live)) == len(live)  # правки по таймеру, одинаковый текст не шлётся
     assert t.crawler._ticker is None

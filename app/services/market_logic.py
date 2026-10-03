@@ -490,7 +490,7 @@ FINAL_HEADERS = {
     "failed": "⚠️ Проверка упала",
     "interrupted": "⏹ Прервано",
 }
-BAR_WIDTH = 10
+BAR_WIDTH = 20
 ETA_MIN_LOADS = 10  # раньше оценка скорости слишком шумная
 
 
@@ -501,7 +501,7 @@ def _mmss(seconds: float) -> str:
 
 def progress_bar(loads: int, budget: int) -> str:
     done = min(max(round(BAR_WIDTH * loads / budget), 0), BAR_WIDTH) if budget else 0
-    return "▓" * done + "░" * (BAR_WIDTH - done)
+    return "[" + "■" * done + "□" * (BAR_WIDTH - done) + "]"
 
 
 def current_label(section: str, sub: str) -> str:
@@ -518,23 +518,19 @@ def format_progress(
     current: str | None = None,
     status: str | None = None,
 ) -> str:
-    """Одно живое сообщение: время, полоса, ETA (от скорости загрузок), что обходится сейчас, счётчики.
-    status=None — идёт; иначе итоговый заголовок (+ время у «завершена»), без «Сейчас» и ETA."""
-    if status is None:
-        head = f"⏳ Проверка рынка — {_mmss(elapsed)}"
-    else:
-        head = FINAL_HEADERS.get(status, "⏹ Остановлено")
-        if status in ("done", "budget"):
-            head += f" — {_mmss(elapsed)}"
+    """Одно живое сообщение (вариант «блоки в рамке»): заголовок, полоса, детали в цитате.
+    status=None — идёт (с ETA и текущей категорией); иначе итоговый заголовок без ETA и «сейчас»."""
+    head = "⏳ Проверка рынка" if status is None else FINAL_HEADERS.get(status, "⏹ Остановлено")
     pct = min(round(100 * loads / budget), 100) if budget else 0
-    bar = f"{progress_bar(loads, budget)} {pct}% · загрузок {loads}/{budget}"
+    timing = f"⏱ {_mmss(elapsed)} прошло"
     if status is None and loads >= ETA_MIN_LOADS and budget > loads:
-        bar += f" · осталось ~{max(round(elapsed / loads * (budget - loads) / 60), 1)} мин"
-    lines = [head, bar]
+        timing += f" · ~{max(round(elapsed / loads * (budget - loads) / 60), 1)} мин осталось"
+    details = [timing, f"📄 {loads} из {budget} страниц"]
     if status is None and current:
-        lines.append(f"Сейчас: {current}")
-    lines.append(f"Подкатегорий {subcats} · находок {finds} (🔥 {hot})")
-    return "\n".join(lines)
+        details.append(current)
+    details.append(f"🎯 {finds} находок · 🔥 {hot} · 📂 {subcats} подкатегорий")
+    body = "\n".join(details)
+    return f"<b>{head}</b>\n<code>{progress_bar(loads, budget)} {pct}%</code>\n<blockquote>{body}</blockquote>"
 
 
 def format_summary(

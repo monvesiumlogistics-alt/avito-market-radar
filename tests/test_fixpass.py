@@ -177,7 +177,7 @@ async def test_progress_send_failure_not_retried_every_minute(tmp_path):
     hook(t, url_of("Ac3"), lambda: t.now.__setitem__(0, NOW + timedelta(seconds=130)))
     t.crawler.start()
     await t.crawler._task
-    assert sum(1 for e in t.provider.events if e[0] == "send" and e[1].startswith("⏳")) == 1
+    assert sum(1 for e in t.provider.events if e[0] == "send" and e[1].startswith("<b>⏳")) == 1
 
 
 async def test_finish_db_error_still_sends_summary(tmp_path):
