@@ -58,6 +58,7 @@ from app.services.market_logic import (
     summary_tail,
 )
 from app.services.panels import captcha_alert, captcha_passed
+from app.services.radar import build_radar
 from app.services.sweep import daily_due, format_sweep_summary, is_quiet, plan_depth, rate_per_hour
 
 log = logging.getLogger(__name__)
@@ -477,8 +478,8 @@ class MarketCrawler:
 
     async def _summary(self, status: str) -> None:
         """Итог (формат D): все находки прогона (и 🔥 тоже) по разделам + ушедшие при перепроверке (ADR-013)."""
-        if self.kind == "sweep":
-            await self._send_many([self._sweep_summary(status)])
+        if self.kind == "sweep":  # итог обхода = утренний радар, телеметрия обхода — свёрнутым блоком (ADR-017)
+            await self._send_many(self.radar_texts(tail=self._sweep_summary(status)))
             return
         s = self.settings
         with self.session_factory() as db:
@@ -513,6 +514,11 @@ class MarketCrawler:
                 premium=pr,
             )
         await self._send_many(texts)
+
+    def radar_texts(self, tail: str | None = None) -> list[str]:
+        """MARKET RADAR по истории из БД (без загрузок): /radar и итог ежедневного обхода."""
+        with self.session_factory() as db:
+            return build_radar(db, self.clock(), self._categories(db), tail, self.settings.premium_emoji)
 
     def _sweep_summary(self, status: str) -> str:
         fields = ("pages", "new_ads", "known_ads", "stop_reason", "window_hours")

@@ -56,6 +56,11 @@ def build_router(
     async def sweep(msg: Message) -> None:
         await msg.answer(crawler.start("sweep"))
 
+    @router.message(Command("radar"))
+    async def radar(msg: Message) -> None:
+        for text in crawler.radar_texts():
+            await msg.answer(text, link_preview_options=NO_PREVIEW)
+
     @router.message(Command("stop"))
     @router.message(F.text == STOP_BUTTON)
     async def stop(msg: Message) -> None:

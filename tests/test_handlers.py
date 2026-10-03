@@ -36,6 +36,10 @@ class FakeCrawler:
         self.calls.append("start" if kind == "report" else kind)
         return "Начинаю проверку рынка"
 
+    def radar_texts(self):
+        self.calls.append("radar")
+        return ["📡 radar"]
+
     def stop(self):
         self.calls.append("stop")
         return "Проверка не идёт"
