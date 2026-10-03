@@ -5,6 +5,7 @@
 
 import hashlib
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -24,9 +25,23 @@ SELECTORS: dict[str, list[str]] = {
     "date": ['[data-marker="item-date"]'],
     "description": ['meta[itemprop="description"]', '[class*="item-description"]'],
     "seller": ['a[href*="/user/"] p', 'a[href*="/brands/"] p'],
+    # проверено на живых страницах 2026-10-03 (ADR-004)
+    "subcat": ['[data-marker="rubricator"] a[data-marker$="/clickable"]'],
+    "item_date": ['[data-marker="item-view/item-date"]'],
+    "item_views": ['[data-marker="item-view/total-views"]'],
+    "item_today": ['[data-marker="item-view/today-views"]'],
+    "item_seller_link": ['[data-marker="seller-link/link"]', 'a[href*="/user/"]', 'a[href*="/brands/"]'],
+    "profile_item": ['[data-marker^="item_list_with_filters/item("]'],
 }
 
-BLOCK_MARKERS = ("Доступ ограничен", 'class="firewall-container', "firewall-title")
+# Тексты вёрстки в одном месте (NFR-6)
+TEXT_PATTERNS = {
+    "promoted": re.compile(r"Продвинуто|Забронировано"),
+    "views": re.compile(r"(\d[\d\s]*)\s*просмотр"),
+    "today": re.compile(r"\+\s*(\d[\d\s]*)\s*сегодня"),
+}
+
+BLOCK_MARKERS = ("Доступ ограничен", 'class="firewall-container', "firewall-title", "Вы робот")
 
 
 def is_blocked(html: str, title: str = "") -> bool:
@@ -65,14 +80,43 @@ def city_from_url(url: str) -> str | None:
 _UNITS = (("мин", "minutes"), ("час", "hours"), ("недел", "weeks"), ("д", "days"))
 
 
-def parse_published(text: str | None, now: datetime | None = None) -> datetime | None:
-    """'5 минут назад', 'час назад', '2 дня назад', 'Сегодня 14:30', 'Вчера 09:05'. Иначе None."""
+_MONTHS = {
+    m: i
+    for i, m in enumerate(
+        (
+            "января",
+            "февраля",
+            "марта",
+            "апреля",
+            "мая",
+            "июня",
+            "июля",
+            "августа",
+            "сентября",
+            "октября",
+            "ноября",
+            "декабря",
+        ),
+        1,
+    )
+}
+
+
+def parse_published(text: str | None, now: datetime | None = None, absolute_time: bool = False) -> datetime | None:
+    """'5 минут назад', 'час назад', '2 дня назад', 'Сегодня 14:30', 'Вчера 09:05', 'вчера' (день), '25 сентября'.
+
+    Недели/месяцы назад и даты без времени ('25 сентября [2025]') разбираются всегда; 'D месяц HH:MM'
+    (профиль продавца, карточка) только с absolute_time=True — по умолчанию None, как раньше. Иначе None.
+    """
     if not text:
         return None
     now = now or datetime.now()
     t = text.lower().strip()
     if "только что" in t or "секунд" in t:
         return now
+    m = re.search(r"(\d+)?\s*месяц\w*\s+назад", t)
+    if m:
+        return now - timedelta(days=30 * int(m.group(1) or 1))  # заведомо «старое»
     m = re.search(r"(\d+)?\s*(минут\w*|час\w*|дн\w*|день|недел\w*)\s+назад", t)
     if m:
         n = int(m.group(1) or 1)
@@ -83,6 +127,24 @@ def parse_published(text: str | None, now: datetime | None = None) -> datetime |
     if m:
         day = now if m.group(1) == "сегодня" else now - timedelta(days=1)
         return day.replace(hour=int(m.group(2)), minute=int(m.group(3)), second=0, microsecond=0)
+    m = re.search(r"(\d{1,2})\s+([а-я]+)(?:\s+(\d{4}))?(?:\s+(?:в\s+)?(\d{1,2}):(\d{2}))?", t)
+    if m and m.group(2) in _MONTHS and (absolute_time or not m.group(4)):
+        try:
+            d = datetime(
+                int(m.group(3) or now.year),
+                _MONTHS[m.group(2)],
+                int(m.group(1)),
+                int(m.group(4) or 0),
+                int(m.group(5) or 0),
+            )
+            if d > now and not m.group(3):
+                d = d.replace(year=d.year - 1)  # «25 декабря» в январе — прошлый год
+        except ValueError:
+            return None
+        return d
+    m = re.fullmatch(r"(сегодня|вчера)", t)  # поиск показывает только день, без времени
+    if m:
+        return now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=m.group(1) == "вчера")
     return None
 
 
@@ -145,3 +207,62 @@ def parse_search_html(html: str, label: str = "") -> list[Listing]:
             )
         )
     return listings
+
+
+@dataclass(frozen=True)
+class ItemStats:
+    views: int | None = None
+    today: int | None = None
+    date_text: str | None = None  # '· вчера в 22:36' без «· »; разбирать parse_published(absolute_time=True)
+    seller_url: str | None = None
+
+
+def _digits(pattern: str, text: str) -> int | None:
+    m = TEXT_PATTERNS[pattern].search(text)
+    return int(re.sub(r"\D", "", m.group(1))) if m else None
+
+
+def parse_item_page(html: str) -> ItemStats:
+    """Страница карточки: просмотры, «+сегодня», дата, ссылка на продавца. Чего нет — None."""
+    soup = BeautifulSoup(html, "html.parser")
+    views = _value(_first(soup, "item_views"))
+    today = _value(_first(soup, "item_today"))
+    date = _value(_first(soup, "item_date"))
+    link = _first(soup, "item_seller_link")
+    return ItemStats(
+        views=_digits("views", views) if views else None,
+        today=_digits("today", today) if today else None,
+        date_text=date.lstrip("· ").strip() or None if date else None,
+        seller_url=normalize_url(link["href"]) if link is not None and link.get("href") else None,
+    )
+
+
+def parse_seller_date(html: str, item_id: str) -> str | None:
+    """Дата объявления item_id в профиле продавца (текст как есть, '5 часов назад') или None."""
+    soup = BeautifulSoup(html, "html.parser")
+    for card in soup.select(SELECTORS["profile_item"][0]):
+        if card.get("data-item-id") == item_id:
+            return _value(_first(card, "date"))
+    return None
+
+
+def promoted_ids(html: str) -> set[str]:
+    """id продвинутых/зарезервированных карточек выдачи: они не останавливают листание."""
+    soup = BeautifulSoup(html, "html.parser")
+    return {
+        card["data-item-id"]
+        for card in soup.select(SELECTORS["card"][0])
+        if card.get("data-item-id") and TEXT_PATTERNS["promoted"].search(card.get_text(" ", strip=True))
+    }
+
+
+def parse_subcategories(html: str, section: str, limit: int) -> list[tuple[str, str]]:
+    """Подкатегории со страницы раздела: [(название, url)], не больше limit. Ссылки /all/<section>/<sub>-<hash>."""
+    soup = BeautifulSoup(html, "html.parser")
+    seen: dict[str, str] = {}
+    for a in soup.select(SELECTORS["subcat"][0]):
+        parts = [p for p in urlsplit(a.get("href", "")).path.split("/") if p]
+        name = a.get_text(" ", strip=True)
+        if len(parts) == 3 and parts[1] == section and name:
+            seen.setdefault(normalize_url(a["href"]), name)
+    return [(name, url) for url, name in list(seen.items())[:limit]]
