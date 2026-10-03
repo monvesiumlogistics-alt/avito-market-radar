@@ -2,6 +2,15 @@ from urllib.parse import unquote, urlsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 25 разделов TOP из avito_niche/catalog.js
+TOP_SECTIONS = (
+    "telefony,audio_i_video,tovary_dlya_kompyutera,noutbuki,nastolnye_kompyutery,planshety_i_elektronnye_knigi,"
+    "orgtehnika_i_rashodniki,fototehnika,igry_pristavki_i_programmy,bytovaya_tehnika,odezhda_obuv_aksessuary,"
+    "detskaya_odezhda_i_obuv,tovary_dlya_detey_i_igrushki,chasy_i_ukrasheniya,krasota_i_zdorove,"
+    "remont_i_stroitelstvo,mebel_i_interer,posuda_i_tovary_dlya_kuhni,kollektsionirovanie,muzykalnye_instrumenty,"
+    "ohota_i_rybalka,sport_i_otdyh,velosipedy,tovary_dlya_zhivotnyh,zapchasti_i_aksessuary"
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -29,6 +38,21 @@ class Settings(BaseSettings):
     )
     price_min: int | None = 0
     price_max: int | None = 2000
+
+    # Проверка рынка (/report)
+    report_sections: str = TOP_SECTIONS  # slug'и через запятую; в .env только переопределение
+    report_max_subcats: int = 18
+    report_max_pages: int = 5
+    report_max_age_days: int = 7
+    min_price: int = 10000
+    vpd_min: int = 50  # просмотров в день: ниже — не находка
+    vpd_hot: int = 100  # от этого — 🔥
+    report_cards_per_subcat: int = 12
+    report_budget: int = 600  # загрузок страниц на прогон
+    report_resume_hours: int = 12
+    check_seller_date: bool = True
+    page_delay_min: float = 2
+    page_delay_max: float = 5
 
     database_url: str = "sqlite:///./data/app.db"
     log_level: str = "INFO"

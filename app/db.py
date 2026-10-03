@@ -54,6 +54,61 @@ class ListingRow(Base):
     notified_at: Mapped[datetime | None]
 
 
+class Category(Base):
+    __tablename__ = "categories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    section: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(200))
+    url: Mapped[str] = mapped_column(String(300), unique=True)
+    discovered_at: Mapped[datetime]
+    last_crawled_at: Mapped[datetime | None]
+    last_run_id: Mapped[int | None]  # «пройдена в этом прогоне» = last_run_id == run.id
+    last_best_vpd: Mapped[int | None]
+    last_status: Mapped[str | None] = mapped_column(String(16))  # ok | error
+    last_days_covered: Mapped[float | None]
+
+
+class CrawlRun(Base):
+    __tablename__ = "crawl_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    started_at: Mapped[datetime]
+    finished_at: Mapped[datetime | None]
+    # running | stopped | blocked | interrupted | budget | done | failed
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    loads: Mapped[int] = mapped_column(default=0)
+    finds_count: Mapped[int] = mapped_column(default=0)
+    progress_msg_id: Mapped[int | None]
+    note: Mapped[str | None] = mapped_column(Text)
+
+
+class Find(Base):
+    __tablename__ = "finds"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("crawl_runs.id"))
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
+    group_key: Mapped[str] = mapped_column(String(300), index=True)
+    title: Mapped[str] = mapped_column(String(500))
+    price_min: Mapped[int]
+    price_max: Mapped[int]
+    views: Mapped[int | None]  # всего просмотров на карточке
+    vpd: Mapped[int]
+    today: Mapped[int | None]
+    page_date: Mapped[datetime | None]  # дата со страницы карточки
+    seller_date: Mapped[datetime | None]  # дата из профиля продавца, если нашлась
+    age_days: Mapped[float]
+    date_checked: Mapped[bool]
+    copies: Mapped[int]
+    url: Mapped[str] = mapped_column(String(1000))
+    external_id: Mapped[str] = mapped_column(String(64))
+    hot: Mapped[bool]
+    sent: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime]
+    china_price: Mapped[int | None]  # US-8, в v1 пусто
+
+
 def init_db(url: str) -> sessionmaker:
     if url.startswith("sqlite:///"):
         Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
