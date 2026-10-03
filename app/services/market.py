@@ -3,9 +3,12 @@
 import asyncio
 import contextlib
 import logging
+import math
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from types import SimpleNamespace as NS
 from typing import Protocol
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -55,6 +58,7 @@ from app.services.market_logic import (
     summary_tail,
 )
 from app.services.panels import captcha_alert, captcha_passed
+from app.services.sweep import daily_due, format_sweep_summary, is_quiet, plan_depth, rate_per_hour
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +144,9 @@ class MarketCrawler:
         self._current: str | None = None  # что обходится сейчас (строка «Сейчас» в сообщении о прогрессе)
         self._ticker: asyncio.Task | None = None
         self.gone_ids: list[int] = []  # находки, исчезнувшие при перепроверке в этом прогоне
+        self.kind = "report"  # report (/report) | sweep (ежедневный обход выдачи, ADR-016)
+        self.captcha_waits = 0
+        self._quiet = 0  # тихих категорий, пропущенных обходом
 
     # --- жизненный цикл ---
 
@@ -147,13 +154,20 @@ class MarketCrawler:
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    def start(self) -> str:
-        """/report: ответ пользователю; обход идёт в фоновой задаче."""
+    @property
+    def budget(self) -> int:
+        return self.settings.sweep_budget if self.kind == "sweep" else self.settings.report_budget
+
+    def start(self, kind: str = "report") -> str:
+        """/report или /sweep: ответ пользователю; обход идёт в фоновой задаче. Продолжается прогон того же вида."""
         if self.running:
-            return "Проверка уже идёт\n" + self._progress_text()
+            busy = "Проверка уже идёт" if self.kind == "report" else "Обход уже идёт"
+            return f"{busy}\n" + self._progress_text()
         now, s = self.clock(), self.settings
         with self.session_factory() as db:
-            last = db.scalars(select(CrawlRun).order_by(CrawlRun.id.desc()).limit(1)).first()
+            last = db.scalars(
+                select(CrawlRun).where(CrawlRun.kind == kind).order_by(CrawlRun.id.desc()).limit(1)
+            ).first()
             resume = (
                 last is not None
                 and last.status in RESUMABLE
@@ -162,14 +176,25 @@ class MarketCrawler:
             if resume:
                 run = last
                 run.status, run.finished_at = "running", None
-                done = db.scalar(select(func.count()).select_from(Category).where(Category.last_run_id == run.id))
-                reply = f"Продолжаю проверку (пройдено подкатегорий: {done})"
+                if kind == "sweep":
+                    done = db.scalar(
+                        select(func.count())
+                        .select_from(ScanCategory)
+                        .where(ScanCategory.run_id == run.id, ScanCategory.done.is_(True))
+                    )
+                    reply = f"Продолжаю обход (пройдено категорий: {done})"
+                else:
+                    done = db.scalar(
+                        select(func.count()).select_from(Category).where(Category.last_run_id == run.id)
+                    )
+                    reply = f"Продолжаю проверку (пройдено подкатегорий: {done})"
             else:
-                run = CrawlRun(started_at=now)
+                run = CrawlRun(started_at=now, kind=kind)
                 db.add(run)
-                reply = "Начинаю проверку рынка"
+                reply = "Начинаю проверку рынка" if kind == "report" else "Начинаю обход рынка"
             db.commit()
             self.run_id, self.loads, self._loads_saved = run.id, 0, 0
+        self.kind, self.captcha_waits, self._quiet = kind, 0, 0
         self.stop_requested, self.errors = False, []
         self._progress_at = self._progress_id = None
         self.gone_ids = []
@@ -177,6 +202,19 @@ class MarketCrawler:
         self._progress_tried = False  # на продолжении новое сообщение о прогрессе (m6)
         self._task = asyncio.create_task(self._run())
         return reply
+
+    def daily(self) -> bool:
+        """По расписанию и при старте бота: ежедневный обход, если пора и сегодня ещё не было (ADR-016)."""
+        if self.running:
+            return False
+        with self.session_factory() as db:
+            last = db.scalars(
+                select(CrawlRun).where(CrawlRun.kind == "sweep").order_by(CrawlRun.id.desc()).limit(1)
+            ).first()
+        if not daily_due(self.clock(), self.settings.daily_sweep_at, last):
+            return False
+        log.info("[MARKET] ежедневный обход: %s", self.start("sweep"))
+        return True
 
     def stop(self) -> str:
         if not self.running:
@@ -206,9 +244,12 @@ class MarketCrawler:
                 await self._send_progress(force=True)
                 if self.settings.progress_edit_seconds > 0:
                     self._ticker = asyncio.create_task(self._tick())
-                await self._recheck_finds()
-                await self.discover_sections()
-                await self._crawl_all()
+                if self.kind == "sweep":
+                    await self._sweep_all()
+                else:
+                    await self._recheck_finds()
+                    await self.discover_sections()
+                    await self._crawl_all()
                 status = "done"
             except StopRequested:
                 status = "stopped"
@@ -266,13 +307,64 @@ class MarketCrawler:
         for cat in order:
             if self.stop_requested:
                 raise StopRequested
-            if self.loads >= self.settings.report_budget:
+            if self.loads >= self.budget:
                 raise BudgetExhausted
             # предохранитель (M4): Chromium упал / окно закрыли -> каждая следующая подкатегория падает мгновенно
             streak = 0 if await self.crawl_subcategory(cat.id) else streak + 1
             if streak >= MAX_ERROR_STREAK:
                 log.error("[MARKET] %d ошибок подряд, прогон остановлен", streak)
                 raise BreakerTripped
+            await self._send_progress()
+
+    async def _sweep_all(self) -> None:
+        """Ежедневный обход выдачи (ADR-016): глубина по темпу категории, тихие — через день, давно не бывшие —
+        первыми; прерванная категория продолжается со следующей страницы (чекпойнт scan_categories)."""
+        s, now = self.settings, self.clock()
+        with self.session_factory() as db:
+            cats = self._categories(db)
+            scans = db.scalars(
+                select(ScanCategory)
+                .where(ScanCategory.category_id.in_([c.id for c in cats]))
+                .order_by(ScanCategory.at.desc())
+            ).all()
+        mine = {r.category_id: r for r in scans if r.run_id == self.run_id}
+        past: dict[int, list] = defaultdict(list)
+        for r in scans:
+            if r.done and r.run_id != self.run_id:
+                past[r.category_id].append(r)
+        plan, self._quiet = [], 0
+        for c in cats:
+            cur = mine.get(c.id)
+            if cur is not None and cur.done:
+                continue
+            hist = past[c.id]
+            rate = rate_per_hour(hist)
+            since = (now - hist[0].at).total_seconds() / 3600 if hist else None
+            if cur is None and is_quiet(rate, since, s):
+                self._quiet += 1
+                continue
+            start = cur.pages + 1 if cur is not None else 1
+            plan.append((math.inf if since is None else since, c, start, max(plan_depth(rate, since, s), start)))
+        plan.sort(key=lambda p: -p[0])  # давно не были — первыми
+        streak = 0
+        for _, cat, start, depth in plan:
+            if self.stop_requested:
+                raise StopRequested
+            if self.loads >= self.budget:
+                raise BudgetExhausted
+            self._current = current_label(cat.section, cat.name)
+            try:
+                await self._collect(cat.id, cat.url, cat.name, max_pages=depth, start_page=start, known_stop=True)
+                streak = 0
+            except (StopRequested, BudgetExhausted, ProviderBlocked):
+                self._save(None)
+                raise
+            except Exception as e:
+                log.exception("[MARKET] обход %r упал", cat.name)
+                self.errors.append(f"{cat.name}: {type(e).__name__}: {e}")
+                streak += 1
+                if streak >= MAX_ERROR_STREAK:
+                    raise BreakerTripped from e
             await self._send_progress()
 
     def _categories(self, db) -> list[Category]:
@@ -287,17 +379,24 @@ class MarketCrawler:
     # --- сообщения ---
 
     def _progress_text(self, status: str | None = None) -> str:
+        sweep = self.kind == "sweep"
         with self.session_factory() as db:
             cats = self._categories(db)
-            subcats = len([c for c in cats if c.last_run_id == self.run_id])
-            finds = db.get(CrawlRun, self.run_id).finds_count
-            hot = db.scalar(
-                select(func.count()).select_from(Find).where(Find.run_id == self.run_id, Find.hot.is_(True))
-            )
+            if sweep:
+                mine = db.scalars(select(ScanCategory).where(ScanCategory.run_id == self.run_id)).all()
+                subcats = sum(r.done for r in mine)
+                finds, hot = sum(r.new_ads for r in mine), 0
+            else:
+                subcats = len([c for c in cats if c.last_run_id == self.run_id])
+                finds = db.get(CrawlRun, self.run_id).finds_count
+                hot = db.scalar(
+                    select(func.count()).select_from(Find).where(Find.run_id == self.run_id, Find.hot.is_(True))
+                )
         elapsed = (self.clock() - self._started).total_seconds() if self._started else 0
+        extra = {"title": "📡 Обход рынка", "found_label": "Новых объявлений"} if sweep else {}
         return format_progress(
-            elapsed, self.loads, self.settings.report_budget, subcats, finds, hot or 0, self._current, status,
-            total=len(cats), errors=len(self.errors), premium=self.settings.premium_emoji,
+            elapsed, self.loads, self.budget, subcats, finds, hot or 0, self._current, status,
+            total=len(cats), errors=len(self.errors), premium=self.settings.premium_emoji, **extra,
         )
 
     async def _tick(self) -> None:
@@ -378,6 +477,9 @@ class MarketCrawler:
 
     async def _summary(self, status: str) -> None:
         """Итог (формат D): все находки прогона (и 🔥 тоже) по разделам + ушедшие при перепроверке (ADR-013)."""
+        if self.kind == "sweep":
+            await self._send_many([self._sweep_summary(status)])
+            return
         s = self.settings
         with self.session_factory() as db:
             finds = dedupe_finds(db.scalars(select(Find).where(Find.run_id == self.run_id)))
@@ -412,13 +514,27 @@ class MarketCrawler:
             )
         await self._send_many(texts)
 
+    def _sweep_summary(self, status: str) -> str:
+        fields = ("pages", "new_ads", "known_ads", "stop_reason", "window_hours")
+        with self.session_factory() as db:
+            names = {c.id: c.name for c in self._categories(db)}
+            mine = db.scalars(select(ScanCategory).where(ScanCategory.run_id == self.run_id)).all()
+            rows = [
+                NS(name=names.get(r.category_id, "?"), **{k: getattr(r, k) for k in fields}) for r in mine if r.done
+            ]
+        note = STATUS_NOTES.get(status, "").replace("/report", "/sweep") or None
+        return format_sweep_summary(
+            f"{self.clock():%d.%m}", rows, len(names), self._quiet, self.loads, self.captcha_waits, self.errors,
+            status, note, self.settings.premium_emoji,
+        )  # fmt: skip
+
     # --- загрузки ---
 
     async def _before_load(self) -> None:
         """Единственная точка перед каждой загрузкой: стоп, бюджет, уступка браузера, счётчик (M2)."""
         if self.stop_requested:
             raise StopRequested
-        if self.loads >= self.settings.report_budget:
+        if self.loads >= self.budget:
             raise BudgetExhausted
         if self.gate and self.gate.contended:
             await self._handover()
@@ -479,6 +595,7 @@ class MarketCrawler:
         log.error("[MARKET] блок: %s", reason)
         if self.settings.headless or minutes <= 0:
             return False
+        self.captcha_waits += 1
         await self.notifier.send_text(captcha_alert(minutes, self.settings.premium_emoji))
         before, self._current = self._current, "🧩 жду проверку капчи"
         await self._send_progress(force=True)
@@ -518,7 +635,7 @@ class MarketCrawler:
         if todo:
             self._current = "перепроверка находок"
         for ext_id, (_, url) in list(todo.items())[:limit]:
-            if self.loads >= self.settings.report_budget:
+            if self.loads >= self.budget:
                 break  # перепроверка не съедает бюджет обхода целиком: на обход остаётся только то, что осталось
             try:
                 res = await self._fetch(url, SELECTORS["item_views"][0])
@@ -610,16 +727,31 @@ class MarketCrawler:
         await self._send_hot(added)
         return True
 
-    async def _collect(self, cat_id: int, url: str, name: str) -> tuple[list[Listing], float]:
+    async def _collect(
+        self,
+        cat_id: int,
+        url: str,
+        name: str,
+        max_pages: int | None = None,
+        start_page: int = 1,
+        known_stop: bool = False,
+    ) -> tuple[list[Listing], float]:
         """Листает выдачу по дате; возвращает кандидатов и сколько дней из max_age покрыто.
-        Каждая прочитанная страница сразу пишется в историю (ADR-015): прерывание не теряет увиденное."""
+        Каждая прочитанная страница сразу пишется в историю и чекпойнт (ADR-015/016): прерывание не теряет увиденное.
+        known_stop (обход): стоп, когда доля уже знакомых непромо-объявлений страницы >= SWEEP_KNOWN_STOP."""
         s, now = self.settings, self.clock()
         limit = timedelta(days=s.report_max_age_days)
         found: dict[str, Listing] = {}
         last_age: timedelta | None = None
         full = False
         stop, total, pages, seen, new, known = "depth_cap", None, 0, 0, 0, 0
-        for page in range(1, s.report_max_pages + 1):
+        if start_page > 1:  # продолжение прерванной категории: счётчики уже прочитанных страниц
+            with self.session_factory() as db:
+                prev = db.get(ScanCategory, (self.run_id, cat_id))
+                if prev is not None:
+                    total, pages, seen = prev.total_count, prev.pages, prev.cards_seen
+                    new, known = prev.new_ads, prev.known_ads
+        for page in range(start_page, (max_pages or s.report_max_pages) + 1):
             sep = "&" if "?" in url else "?"  # подкатегория может быть поиском по слову: .../muzhskaya_odezhda?q=prada
             res = await self._fetch(with_page(f"{url}{sep}s=104&pmin={s.min_price}", page), SELECTORS["card"][0])
             pages += 1
@@ -629,8 +761,9 @@ class MarketCrawler:
             promo = promoted_ids(res.html)
             with self.session_factory() as db:
                 n, k = record_search(db, cat_id, cards, promo, now)
+                seen, new, known = seen + n + k, new + n, known + k
+                db.merge(self._scan_row(cat_id, now, pages, seen, new, known, total, last_age, "partial", False))
                 db.commit()
-            seen, new, known = seen + n + k, new + n, known + k
             if not cards:
                 log.warning("[MARKET] 0 карточек: %s стр. %d", url, page)
                 stop = "empty"
@@ -650,16 +783,21 @@ class MarketCrawler:
             if old:
                 full, stop = True, "age_limit"
                 break
+            if known_stop and n + k and k / (n + k) >= s.sweep_known_stop:
+                stop = "known"  # дальше — уже виденное в прошлых обходах
+                break
         covered = float(s.report_max_age_days) if full else (last_age.total_seconds() / 86400 if last_age else 0.0)
         with self.session_factory() as db:
-            db.merge(
-                ScanCategory(
-                    run_id=self.run_id, category_id=cat_id, at=now, pages=pages, cards_seen=seen, new_ads=new,
-                    known_ads=known, total_count=total, window_hours=covered * 24, stop_reason=stop,
-                )
-            )  # fmt: skip
+            db.merge(self._scan_row(cat_id, now, pages, seen, new, known, total, timedelta(days=covered), stop, True))
             db.commit()
         return list(found.values()), covered
+
+    def _scan_row(self, cat_id, now, pages, seen, new, known, total, window: timedelta | None, stop, done):
+        hours = window.total_seconds() / 3600 if window else 0.0
+        return ScanCategory(
+            run_id=self.run_id, category_id=cat_id, at=now, pages=pages, cards_seen=seen, new_ads=new,
+            known_ads=known, total_count=total, window_hours=hours, stop_reason=stop, done=done,
+        )  # fmt: skip
 
     async def _evaluate(self, cat_id: int, cards: list[Listing]) -> tuple[list[Find], int, list[Opened]]:
         s, now = self.settings, self.clock()

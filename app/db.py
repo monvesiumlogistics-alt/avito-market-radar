@@ -88,6 +88,7 @@ class CrawlRun(Base):
     finished_at: Mapped[datetime | None]
     # running | stopped | blocked | interrupted | budget | done | failed
     status: Mapped[str] = mapped_column(String(16), default="running")
+    kind: Mapped[str] = mapped_column(String(16), default="report")  # report (/report) | sweep (обход выдачи)
     loads: Mapped[int] = mapped_column(default=0)
     finds_count: Mapped[int] = mapped_column(default=0)
     progress_msg_id: Mapped[int | None]
@@ -189,7 +190,8 @@ class ScanCategory(Base):
     known_ads: Mapped[int]
     total_count: Mapped[int | None]  # «17 888» в заголовке выдачи (с фильтром pmin)
     window_hours: Mapped[float]  # какой промежуток времени покрыт прочитанными страницами
-    stop_reason: Mapped[str] = mapped_column(String(16))  # age_limit | depth_cap | empty
+    stop_reason: Mapped[str] = mapped_column(String(16))  # known | age_limit | depth_cap | empty | partial
+    done: Mapped[bool] = mapped_column(default=True)  # False — прервана: чекпойнт, обход продолжит со следующей стр.
 
 
 _ADDED_COLUMNS = (  # (таблица, колонка, тип) — константы, не ввод пользователя
@@ -207,6 +209,8 @@ _ADDED_COLUMNS = (  # (таблица, колонка, тип) — конста�
     ("finds", "gone_at", "DATETIME"),
     ("finds", "last_checked_at", "DATETIME"),
     ("finds", "views_last", "INTEGER"),
+    ("crawl_runs", "kind", "VARCHAR(16) NOT NULL DEFAULT 'report'"),
+    ("scan_categories", "done", "BOOLEAN NOT NULL DEFAULT 1"),
 )
 
 

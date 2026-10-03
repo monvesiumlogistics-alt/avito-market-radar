@@ -52,6 +52,10 @@ def build_router(
     async def report(msg: Message) -> None:
         await msg.answer(crawler.start())
 
+    @router.message(Command("sweep"))
+    async def sweep(msg: Message) -> None:
+        await msg.answer(crawler.start("sweep"))
+
     @router.message(Command("stop"))
     @router.message(F.text == STOP_BUTTON)
     async def stop(msg: Message) -> None:

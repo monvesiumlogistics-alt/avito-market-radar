@@ -25,9 +25,17 @@ def setup_logging(level: str) -> None:
     logging.getLogger("aiogram.event").setLevel(logging.WARNING)  # не спамить каждым апдейтом
 
 
-def build_scheduler(scanner: Scanner) -> AsyncIOScheduler:
-    """Единственная задача по расписанию — мониторинг; проверка рынка только по кнопке (AC-1.3)."""
+def build_scheduler(scanner: Scanner, crawler: MarketCrawler | None = None, daily_at: str = "") -> AsyncIOScheduler:
+    """Мониторинг по интервалу; ежедневный обход выдачи в daily_at МСК + догоняющий запуск после старта бота
+    (ПК мог быть выключен в 09:00). /report (карточки) — только по кнопке (ADR-016)."""
     scheduler = AsyncIOScheduler()
+    if crawler is not None and daily_at:
+        hour, minute = daily_at.split(":")
+        scheduler.add_job(
+            crawler.daily, "cron", hour=int(hour), minute=int(minute), timezone="Europe/Moscow", id="sweep",
+            max_instances=1, coalesce=True, misfire_grace_time=6 * 3600,
+        )  # fmt: skip
+        scheduler.add_job(crawler.daily, "date", run_date=datetime.now() + timedelta(minutes=2), id="sweep_catchup")
     scheduler.add_job(
         scanner.run_watch_rules,
         "interval",
@@ -79,7 +87,7 @@ async def main() -> None:
     )
     crawler.mark_interrupted()  # прогон, оборванный перезапуском бота, можно продолжить по /report
 
-    scheduler = build_scheduler(scanner)
+    scheduler = build_scheduler(scanner, crawler, settings.daily_sweep_at)
     scheduler.start()
 
     dp = Dispatcher()

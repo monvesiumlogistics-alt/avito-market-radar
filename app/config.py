@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     cny_rate: float = 12.2
     cargo_rub_per_kg: float = 500  # наземка
     cargo_air_rub_per_kg: float = 3000  # авиа
+    # Ежедневный обход выдачи (ADR-016): только страницы выдачи, без карточек
+    daily_sweep_at: str = "09:00"  # МСК; "" — без расписания (только /sweep)
+    sweep_budget: int = 800  # загрузок на обход
+    sweep_first_pages: int = 3  # страниц для категории без истории
+    sweep_max_pages: int = 10
+    sweep_known_stop: float = 0.85  # стоп, когда такая доля непромо-объявлений страницы уже знакома
+    sweep_quiet_per_day: int = 25  # тише — категория обходится через день
     page_delay_min: float = 2
     page_delay_max: float = 5
 

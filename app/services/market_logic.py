@@ -730,6 +730,8 @@ def format_progress(
     total: int | None = None,
     errors: int = 0,
     premium: bool = False,
+    title: str = "🔎 Проверка рынка",
+    found_label: str = "Найдено",
 ) -> str:
     """Одно живое сообщение: заголовок, что обходится, полоса с %, статистика построчно.
     status=None — идёт (с «Осталось» и текущей категорией); иначе итоговый заголовок.
@@ -738,7 +740,7 @@ def format_progress(
     def i(e: str) -> str:
         return icon(e, premium)
 
-    head = "🔎 Проверка рынка" if status is None else FINAL_HEADERS.get(status, "⏹ Остановлено")
+    head = title if status is None else FINAL_HEADERS.get(status, "⏹ Остановлено")
     lead, _, rest = head.partition(" ")
     head = f"{i(lead)} {rest}"
     pct = min(100 * loads / budget, 100) if budget else 0
@@ -754,7 +756,7 @@ def format_progress(
         "",
         f"<b>{i('ℹ️')} {'Обход…' if status is None else 'Готово'}</b>",
         f"{i('⏩')} Страниц: <code>{loads} / {budget}</code>",
-        f"{i('✅')} Найдено: <code>{finds}</code>" + (f" · 🔥 <code>{hot}</code>" if hot else ""),
+        f"{i('✅')} {found_label}: <code>{finds}</code>" + (f" · 🔥 <code>{hot}</code>" if hot else ""),
         f"{i('❗️')} Ошибок: <code>{errors}</code>",
         f"{i('⏲')} Скорость: <code>{speed}</code>",
         f"{i('📖')} Прошло: <code>{_mmss(elapsed)}</code> · Осталось: <code>{left}</code>",

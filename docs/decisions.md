@@ -117,3 +117,14 @@
 - New parser field `parse_total_count` (`page-title/count`, «17 888»): free supply series per category, read from page 1.
 - Fix: an empty first search page while the header says N > 0 listings is a layout failure, not «the whole week covered» (covered = 0, stop reason `empty`). An empty page without a counter keeps the old meaning.
 - `scripts/backfill_history.py` moves existing finds into `ads` + `card_obs` (idempotent via bucket `backfill`). Run on 2026-10-03: 34 listings; DB backup `data/app.db.bak-20261003-phase1`.
+
+## ADR-016: Daily incremental sweep of all categories (Radar V2, Phase 2) (2026-10-04)
+- Status: accepted (user: «дальше идем»).
+- Avito «Аналитика спроса» is **not** used: it needs a paid tariff (~8 000 ₽). Demand stays our own measurement (card views, baseline per category — Phase 4).
+- `/sweep` and a daily job read only search pages of every non-skipped category — no cards, no seller profiles. A run is `crawl_runs.kind = 'sweep'` with its own budget `SWEEP_BUDGET` (800); `/report` runs are `kind = 'report'` and keep `REPORT_BUDGET`. A run resumes only a run of the same kind (12 h window, as before).
+- Depth per category: `rate` = median of `cards_seen / window_hours` over its last 7 finished scans (any kind; windows < 1 h ignored); `pages = ceil(rate × hours since last scan / 50 × 1.3) + 1`, clamped to [2, `SWEEP_MAX_PAGES`=10]; no history → `SWEEP_FIRST_PAGES`=3. Categories with < `SWEEP_QUIET_PER_DAY` (25) new listings/day scanned less than 36 h ago are skipped (every other day). Order: longest since last scan first.
+- Stops (same `_collect` as `/report`): 7-day age limit, empty page, depth cap, and for the sweep `known` — a fully read page where ≥ `SWEEP_KNOWN_STOP` (0.85) of non-promo listings were already in `ads`. No id watermark (ADR-015).
+- Checkpoint: after every page `scan_categories` gets a `done = false` row (`stop_reason = partial`) in the same commit as the listings; a resumed sweep continues that category from the next page with the counters kept. `/report` still restarts an interrupted subcategory from page 1.
+- Schedule: APScheduler cron `DAILY_SWEEP_AT` (09:00 Europe/Moscow, misfire grace 6 h, max_instances 1) plus a one-off catch-up 2 min after bot start; both call `MarketCrawler.daily()`, which starts/resumes a sweep only if the time has passed today, nothing is running and today has no `done`/`budget` sweep (a `blocked`/`stopped` one is resumed). `DAILY_SWEEP_AT=""` disables the schedule.
+- Telemetry: progress message «📡 Обход рынка» (new listings instead of finds); final message with categories done / total, quiet skipped, pages, loads, new vs known listings, stop reasons, captcha waits, errors, and «не досмотрено» for depth-capped categories with covered hours.
+- Data: the 209 regular categories were un-skipped (brand mode is over); all 257 categories are active. `/skip` turns any back off.

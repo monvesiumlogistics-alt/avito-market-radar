@@ -32,8 +32,8 @@ class FakeCrawler:
     def __init__(self):
         self.calls = []
 
-    def start(self):
-        self.calls.append("start")
+    def start(self, kind="report"):
+        self.calls.append("start" if kind == "report" else kind)
         return "Начинаю проверку рынка"
 
     def stop(self):
