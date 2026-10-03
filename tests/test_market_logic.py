@@ -223,14 +223,16 @@ def test_format_line_fields_markers_and_escaping():
 def test_format_results_splits_long_section_into_expandable_quotes():
     entries = [entry(f"Item {i:03d} " + "w" * 20, 500 - i, "velosipedy", "x", id=i) for i in range(120)]
     msgs = format_results("<b>H</b>", "S", entries, limit=1000)
-    assert len(msgs) > 3 and all(len(m) <= 1000 for m in msgs)
+    from app.services.market_logic import tg_len
+
+    assert len(msgs) > 3 and all(tg_len(m) <= 1000 for m in msgs)
     for m in msgs:
         assert m.count("<blockquote expandable>") == m.count("</blockquote>") >= 1  # цитаты целые
     text = "\n\n".join(msgs)
     assert text.count("<b>🚲 Велосипеды — 120</b>") == 1 and "<b>🚲 Велосипеды (продолжение)</b>" in text
     assert [int(x[:3]) for x in text.split("Item ")[1:]] == list(range(120))  # порядок по vpd, ничего не потеряно
     big = format_results("<b>H</b>", "S", entries * 3)  # реальный лимит 4096
-    assert all(len(m) <= 4096 for m in big) and len(big) >= 2
+    assert all(tg_len(m) <= 4096 for m in big) and len(big) >= 2
     assert "Находок нет." in format_results("<b>H</b>", "S", [])[0]
     assert format_results("<b>H</b>", "S", [], tail=["хвост"])[0].endswith("хвост")
 
@@ -407,3 +409,12 @@ def test_format_progress_premium_icons():
     prem = format_progress(754, 228, 600, 31, 9, 4, "x", premium=True)
     assert prem.startswith('<b><tg-emoji emoji-id="5870974879200711167">🔎</tg-emoji> Проверка рынка</b>')
     assert prem.count("<tg-emoji") == 9 and "🔥 <code>4</code>" in prem  # 🔥 нет в наборе — обычный
+
+
+def test_tg_len_ignores_tags_and_packs_one_message():
+    from app.services.market_logic import pack_messages, tg_len
+
+    line = '<a href="https://www.avito.ru/' + "x" * 300 + '">Худи</a> &amp; 🔥'
+    assert tg_len(line) == len("Худи & ") + 2  # 🔥 = 2 единицы UTF-16, href не считается
+    blocks = [line] * 30  # сырой HTML ~10 000 символов, видимого текста ~400
+    assert len(pack_messages(blocks)) == 1

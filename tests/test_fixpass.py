@@ -347,8 +347,10 @@ def test_split_message_does_not_cut_inside_entity_or_tag():
     chunks = split_message(line, 98)
     assert "".join(chunks) == line and all("&amp;" in c or "&" not in c for c in chunks)
     tagged = "x" * 90 + '<a href="u">t</a>'
+    assert split_message(tagged, 95) == [tagged]  # видимых 91 символ — влезает, тег в счёт не идёт
+    tagged = "x" * 96 + '<a href="u">t</a>'
     chunks = split_message(tagged, 95)
-    assert "".join(chunks) == tagged and chunks[0] == "x" * 90
+    assert "".join(chunks) == tagged and chunks[0] == "x" * 95  # режем по видимому тексту, тег целиком
 
 
 # --- Безопасность ---

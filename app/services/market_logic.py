@@ -529,6 +529,12 @@ def group_sections(entries: Sequence[Entry]) -> list[tuple[str, list[Entry]]]:
 
 
 QUOTE_OPEN, QUOTE_CLOSE = "<blockquote expandable>", "</blockquote>"
+_TAG = re.compile(r"<[^>]+>")
+
+
+def tg_len(text: str) -> int:
+    """Длина так, как её считает Telegram: видимый текст без HTML-тегов (ссылки в href не в счёт), в UTF-16."""
+    return len(html.unescape(_TAG.sub("", text)).encode("utf-16-le")) // 2
 
 
 def quote_blocks(header: str, cont_header: str, lines: Sequence[str], limit: int = TG_LIMIT) -> list[str]:
@@ -543,7 +549,7 @@ def quote_blocks(header: str, cont_header: str, lines: Sequence[str], limit: int
 
     for line in lines:
         cur.append(line)
-        if len(cur) > 1 and len(build()) > limit:
+        if len(cur) > 1 and tg_len(build()) > limit:
             cur.pop()
             blocks.append(build())
             head, cur = cont_header, [line]
@@ -555,7 +561,7 @@ def pack_messages(blocks: Sequence[str], limit: int = TG_LIMIT) -> list[str]:
     msgs: list[str] = []
     cur = ""
     for b in blocks:
-        if cur and len(cur) + 2 + len(b) > limit:
+        if cur and tg_len(cur) + 2 + tg_len(b) > limit:
             msgs.append(cur)
             cur = b
         else:
@@ -802,12 +808,12 @@ def split_message(text: str, limit: int = TG_LIMIT) -> list[str]:
     chunks: list[str] = []
     current = ""
     for block in text.split("\n\n"):
-        if len(block) > limit:
+        if tg_len(block) > limit:
             if current:
                 chunks.append(current)
                 current = ""
             chunks.extend(_split_lines(block, limit))
-        elif current and len(current) + 2 + len(block) > limit:
+        elif current and tg_len(current) + 2 + tg_len(block) > limit:
             chunks.append(current)
             current = block
         else:
