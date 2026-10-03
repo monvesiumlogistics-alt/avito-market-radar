@@ -92,7 +92,7 @@ class FakeProvider(AvitoProvider):
 
 
 class FakeNotifier:
-    async def send_text(self, text):
+    async def send_text(self, text, markup=None):
         return 1
 
     async def edit_text(self, message_id, text):
@@ -445,8 +445,10 @@ async def test_discover_error_skipped_other_sections_continue(tmp_path):
 class RecNotifier:
     def __init__(self, events):
         self.events, self.sent, self.edits, self.fail = events, [], [], False
+        self.markups: list = []
 
-    async def send_text(self, text):
+    async def send_text(self, text, markup=None):
+        self.markups.append(markup)
         self.events.append(("send", text))
         if self.fail:
             return None

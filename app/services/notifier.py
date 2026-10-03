@@ -56,10 +56,12 @@ class TelegramNotifier:
             log.exception("[NOTIFY] telegram failed avito_id=%s, повторю на следующем скане", row.external_id)
             return False
 
-    async def send_text(self, text: str) -> int | None:
+    async def send_text(self, text: str, markup=None) -> int | None:
         """Одно сообщение (не режет длинный текст — это делает вызывающий). Возвращает id или None при ошибке."""
         try:
-            msg = await self.bot.send_message(self.chat_id, text, link_preview_options=NO_PREVIEW)
+            msg = await self.bot.send_message(
+                self.chat_id, text, reply_markup=markup, link_preview_options=NO_PREVIEW
+            )
             return msg.message_id
         except Exception:
             log.exception("[NOTIFY] не удалось отправить служебное сообщение")

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import sessionmaker
 
@@ -51,6 +52,7 @@ log = logging.getLogger(__name__)
 
 RESUMABLE = ("running", "stopped", "blocked", "interrupted", "failed")  # budget/done: следующий прогон новый
 PROGRESS_EVERY = timedelta(minutes=1)
+FEEDBACK_MAX_FINDS = 8  # кнопки 👍/👎 только у порции до 8 находок (лимит клавиатуры Telegram)
 MAX_ERROR_STREAK = 3
 STATUS_NOTES = {
     "stopped": "Проверка остановлена, продолжу по /report.",
@@ -64,7 +66,7 @@ FETCH_TIMEOUT = 120  # с на одну загрузку: зависший Playw
 
 
 class MarketNotifier(Protocol):
-    async def send_text(self, text: str) -> int | None: ...
+    async def send_text(self, text: str, markup=None) -> int | None: ...
     async def edit_text(self, message_id: int, text: str) -> None: ...
 
 
@@ -233,7 +235,10 @@ class MarketCrawler:
 
     async def _crawl_all(self) -> None:
         with self.session_factory() as db:
-            order = crawl_order(self._categories(db), self.run_id, self.clock())
+            fb = dict(
+                db.execute(select(Find.category_id, func.sum(Find.feedback)).group_by(Find.category_id)).all()
+            )  # 👍/👎 из кнопок под порциями
+            order = crawl_order(self._categories(db), self.run_id, self.clock(), fb)
         streak = 0
         for i, cat in enumerate(order):
             if self.stop_requested:
@@ -250,7 +255,13 @@ class MarketCrawler:
                 await self._portion(cat.section)
 
     def _categories(self, db) -> list[Category]:
-        return list(db.scalars(select(Category).where(Category.section.in_(split_csv(self.settings.report_sections)))))
+        return list(
+            db.scalars(
+                select(Category).where(
+                    Category.section.in_(split_csv(self.settings.report_sections)), Category.skipped.is_not(True)
+                )
+            )
+        )
 
     # --- сообщения ---
 
@@ -284,16 +295,23 @@ class MarketCrawler:
         else:
             await self.notifier.edit_text(self._progress_id, text)
 
-    async def _send(self, text: str) -> bool:
+    async def _send(self, text: str, markup=None) -> bool:
         ok = True
-        for i, chunk in enumerate(split_message(text)):
+        chunks = split_message(text)
+        for i, chunk in enumerate(chunks):
             if i:
                 await asyncio.sleep(self.send_delay)
-            ok &= await self.notifier.send_text(chunk) is not None
+            if markup is not None and len(chunks) == 1:
+                ok &= await self.notifier.send_text(chunk, markup) is not None
+            else:
+                ok &= await self.notifier.send_text(chunk) is not None
         return ok
 
     def _lines(self, db, finds: list[Find]) -> list[str]:
-        """Строки находок: 🔥 первыми, «уже было» (находка в другом прогоне той же подкатегории) после новых."""
+        return [line for _, line in self._sorted_lines(db, finds)]
+
+    def _sorted_lines(self, db, finds: list[Find]) -> list[tuple[Find, str]]:
+        """Находки со строками: 🔥 первыми, «уже было» (находка в другом прогоне той же подкатегории) после новых."""
         if not finds:
             return []
         keys, cat_ids = {f.group_key for f in finds}, {f.category_id for f in finds}
@@ -305,7 +323,7 @@ class MarketCrawler:
         ):
             seen[key] = min(first, seen.get(key, first))
         names = dict(db.execute(select(Category.id, Category.name).where(Category.id.in_(cat_ids))).all())
-        return [format_find(f, names[f.category_id], seen.get(f.group_key)) for f in sort_finds(finds, seen)]
+        return [(f, format_find(f, names[f.category_id], seen.get(f.group_key))) for f in sort_finds(finds, seen)]
 
     async def _portion(self, section: str) -> None:
         """Находки только что пройденного раздела (AC-4.2)."""
@@ -319,9 +337,22 @@ class MarketCrawler:
             )
             if not finds:
                 return
-            text = "\n".join([f"<b>{html.escape(section_name(section))} — находки</b>", *self._lines(db, finds)])
+            pairs = self._sorted_lines(db, finds)
+            markup = None
+            if len(pairs) <= FEEDBACK_MAX_FINDS:  # под порцией: ряд кнопок на находку, номер = номер строки
+                pairs = [(f, f"{n}. {line}") for n, (f, line) in enumerate(pairs, 1)]
+                markup = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(text=f"👍 {n}", callback_data=f"fb:{f.id}:1"),
+                            InlineKeyboardButton(text=f"👎 {n}", callback_data=f"fb:{f.id}:-1"),
+                        ]
+                        for n, (f, _) in enumerate(pairs, 1)
+                    ]
+                )
+            text = "\n".join([f"<b>{html.escape(section_name(section))} — находки</b>", *(ln for _, ln in pairs)])
             ids = [f.id for f in finds]
-        if await self._send(text):  # Telegram не принял — sent=0, находки всё равно попадут в итог
+        if await self._send(text, markup):  # Telegram не принял — sent=0, находки всё равно попадут в итог
             self._mark_sent(ids)
 
     def _mark_sent(self, ids: list[int]) -> None:

@@ -68,6 +68,7 @@ class Category(Base):
     last_status: Mapped[str | None] = mapped_column(String(16))  # ok | error
     last_days_covered: Mapped[float | None]
     prior_score: Mapped[float | None]  # стартовый приоритет из карты (catalog.csv), пока не обходили
+    skipped: Mapped[bool] = mapped_column(default=False)  # /skip: категорию не обходим
 
 
 class CrawlRun(Base):
@@ -107,6 +108,14 @@ class Find(Base):
     sent: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime]
     china_price: Mapped[int | None]  # US-8, в v1 пусто
+    feedback: Mapped[int] = mapped_column(default=0)  # 👍 +1 / 👎 -1 из кнопок под порцией
+
+
+_ADDED_COLUMNS = (  # (таблица, колонка, тип) — константы, не ввод пользователя
+    ("categories", "prior_score", "FLOAT"),
+    ("categories", "skipped", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("finds", "feedback", "INTEGER NOT NULL DEFAULT 0"),
+)
 
 
 def init_db(url: str) -> sessionmaker:
@@ -114,9 +123,10 @@ def init_db(url: str) -> sessionmaker:
         Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(url)
     Base.metadata.create_all(engine)  # ponytail: create_all без миграций, Alembic при переходе на PostgreSQL
-    if "prior_score" not in {c["name"] for c in inspect(engine).get_columns("categories")}:
-        with engine.begin() as conn:  # create_all не меняет существующие таблицы
-            conn.execute(text("ALTER TABLE categories ADD COLUMN prior_score FLOAT"))
+    for table, column, ddl in _ADDED_COLUMNS:  # create_all не меняет существующие таблицы
+        if column not in {c["name"] for c in inspect(engine).get_columns(table)}:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
     return sessionmaker(engine, expire_on_commit=False)
 
 

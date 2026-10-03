@@ -2,14 +2,16 @@ import html
 from datetime import datetime
 
 from aiogram import F, Router
-from aiogram.filters import Command
-from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.filters import Command, CommandObject
+from aiogram.types import BufferedInputFile, CallbackQuery, KeyboardButton, Message, ReplyKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.db import ListingRow, WatchRule
+from app.providers.avito_parser import msk_now
 from app.services.market import MarketCrawler
+from app.services.market_cmds import cats_text, export_csv, set_feedback, set_skipped, top_messages
 from app.services.notifier import NO_PREVIEW, format_price
 from app.services.scanner import Scanner
 
@@ -34,6 +36,7 @@ def build_router(
 ) -> Router:
     router = Router()
     router.message.filter(F.chat.id == admin_chat_id)  # чужим бот молча не отвечает
+    router.callback_query.filter(F.message.chat.id == admin_chat_id)  # и на кнопки чужих тоже
 
     @router.message(Command("start"))
     async def start(msg: Message) -> None:
@@ -42,7 +45,9 @@ def build_router(
             "/status: состояние\n/watchlist: правила\n/check: проверить сейчас\n"
             "/last: последние найденные\n/pause, /resume: пауза мониторинга\n\n"
             "<b>Что выложить</b>: проверка рынка, час-полтора\n"
-            "/report: запустить или продолжить, /stop: остановить",
+            "/report: запустить или продолжить, /stop: остановить\n"
+            "/top [дней]: лучшие находки из базы, /export: все находки файлом CSV\n"
+            "/cats: разделы, /skip текст, /unskip текст: выключить или вернуть категории",
             reply_markup=KEYBOARD,
         )
 
@@ -55,6 +60,54 @@ def build_router(
     @router.message(F.text == STOP_BUTTON)
     async def stop(msg: Message) -> None:
         await msg.answer(crawler.stop())
+
+    @router.message(Command("top"))
+    async def top(msg: Message, command: CommandObject) -> None:
+        arg = (command.args or "").strip()
+        days = int(arg) if arg.isdigit() and 0 < int(arg) <= 365 else 7
+        with session_factory() as db:
+            chunks = top_messages(db, days, msk_now())
+        for chunk in chunks:
+            await msg.answer(chunk, link_preview_options=NO_PREVIEW)
+
+    @router.message(Command("export"))
+    async def export(msg: Message) -> None:
+        with session_factory() as db:
+            data = export_csv(db)
+        if data.count(b"\n") <= 1:
+            await msg.answer("Находок пока нет.")
+            return
+        await msg.answer_document(BufferedInputFile(data, filename=f"finds_{msk_now():%Y%m%d}.csv"))
+
+    @router.message(Command("cats"))
+    async def cats(msg: Message) -> None:
+        with session_factory() as db:
+            chunks = cats_text(db)
+        for chunk in chunks:
+            await msg.answer(chunk)
+
+    @router.message(Command("skip"))
+    @router.message(Command("unskip"))
+    async def skip(msg: Message, command: CommandObject) -> None:
+        skip_on = command.command == "skip"
+        text = (command.args or "").strip()
+        if len(text) < 2:
+            await msg.answer(f"/{command.command} текст: часть названия или slug раздела (от 2 букв)")
+            return
+        with session_factory() as db:
+            n = set_skipped(db, text, skip_on)
+        what = "выключено" if skip_on else "возвращено"
+        await msg.answer(f"{what} категорий: {n}" if n else "Ничего не нашла по этому тексту.")
+
+    @router.callback_query(F.data.startswith("fb:"))
+    async def feedback(cb: CallbackQuery) -> None:
+        parts = (cb.data or "").split(":")
+        value = parts[2] if len(parts) == 3 else ""
+        ok = False
+        if len(parts) == 3 and parts[1].isdigit() and value in ("1", "-1"):
+            with session_factory() as db:
+                ok = set_feedback(db, int(parts[1]), int(value))
+        await cb.answer(("👍 запомнил" if value == "1" else "👎 учту") if ok else "Находка не найдена")
 
     @router.message(Command("status"))
     async def status(msg: Message) -> None:

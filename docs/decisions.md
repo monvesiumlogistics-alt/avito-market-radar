@@ -62,3 +62,11 @@
   12. Docs: AC-5.1 refers to ADR-005, AC-5.3 states the captcha-wait exception, AC-2.4a/4.2/4.4 updated, tech-design cleaned up (section 12).
 - Not done: `BrowserGate.locked` kept (used by tests); `fetch` abstract change skipped (non-abstract default is harmless); thin wrappers in `market_logic` kept (testability).
 
+## ADR-008: Roadmap batch F1-F5 (2026-10-03)
+- Status: accepted (orchestrator; the user delegated decisions)
+- F1 goofish link: `goofish_query(title)` keeps Latin tokens (letters/digits/-/.; at least one letter; length >= 2), drops generic words (new, original, orig, size, cm, mm, kg, set, lot), max 4 tokens in order, None without a model. `format_find` appends `🔎 goofish` (urlencoded + escaped). Tokens without a Latin letter (e.g. «15» in «iPhone 15») are dropped by design.
+- F2 `/top [days]`: DB only (no Avito loads), dedup by `group_key` keeping the best vpd, sorted by vpd, max 15, `split_message`.
+- F3 `/export`: CSV (utf-8-sig, `;`) as a document; cells starting with `= + - @` get a leading `'` (formula injection in Excel).
+- F4 `Category.skipped` (idempotent `ALTER`, generalized `_ADDED_COLUMNS` in `init_db`). `/cats`, `/skip text`, `/unskip text` match slug, Russian section name or subcategory name case-insensitively in Python (SQLite `lower` does not handle Cyrillic), minimum 2 chars. `crawl_order` and `MarketCrawler._categories` exclude skipped categories (progress totals too).
+- F5 feedback: simplest variant. A portion with <= 8 finds gets numbered lines and an inline keyboard, one row per find (`👍 n`/`👎 n`, callback `fb:<find_id>:<1|-1>`); the callback sets `Find.feedback` (overwrite, not accumulate). Callbacks are filtered to the admin chat. `crawl_order(..., feedback)` multiplies priority by `feedback_factor(net)` = clamp(1 + 0.5 * net, 0.25, 2.5), net = sum of feedback over the category's finds. Portions with more than 8 finds and the final summary have no buttons. `send_text` got an optional `markup` argument (only passed when a keyboard exists).
+

@@ -124,19 +124,37 @@ def is_hot(vpd: int, s: Settings) -> bool:
 NEVER_CRAWLED = 1e9  # выше любого «дней с обхода × вес»; внутри — по prior_score из карты
 
 
-def _priority(cat: Category, now: datetime) -> float:
+def feedback_factor(net: int) -> float:
+    """Чистые 👍 минус 👎 по находкам подкатегории -> множитель приоритета: +50 % за каждый 👍, от x0.25 до x2.5."""
+    return min(max(1 + 0.5 * net, 0.25), 2.5)
+
+
+def _priority(cat: Category, now: datetime, net: int = 0) -> float:
+    k = feedback_factor(net)
     if cat.last_crawled_at is None:
-        return NEVER_CRAWLED + (cat.prior_score or 0)
+        return NEVER_CRAWLED + max(cat.prior_score or 0, 1) * k
     days = (now - cat.last_crawled_at).total_seconds() / 86400
-    return days * (1 + min(cat.last_best_vpd or 0, 500) / 100)
+    return days * (1 + min(cat.last_best_vpd or 0, 500) / 100) * k
 
 
-def crawl_order(cats: Sequence[Category], run_id: int, now: datetime) -> list[Category]:
-    """Непройденные в этом прогоне; разделы по лучшему приоритету подкатегорий, внутри раздела — по приоритету."""
-    todo = sorted((c for c in cats if c.last_run_id != run_id), key=lambda c: (-_priority(c, now), c.id))
+def crawl_order(
+    cats: Sequence[Category], run_id: int, now: datetime, feedback: Mapping[int, int] | None = None
+) -> list[Category]:
+    """Непройденные в этом прогоне, без /skip; разделы по лучшему приоритету подкатегорий, внутри — по приоритету.
+
+    feedback: category_id -> чистые 👍/👎; 👍 поднимают подкатегорию, 👎 опускают."""
+    fb = feedback or {}
+
+    def prio(c) -> float:
+        return _priority(c, now, fb.get(c.id, 0))
+
+    todo = sorted(
+        (c for c in cats if c.last_run_id != run_id and not getattr(c, "skipped", False)),
+        key=lambda c: (-prio(c), c.id),
+    )
     best: dict[str, float] = {}
     for c in todo:  # todo по убыванию: первая подкатегория раздела — лучшая
-        best.setdefault(c.section, _priority(c, now))
+        best.setdefault(c.section, prio(c))
     rank = {sec: i for i, sec in enumerate(sorted(best, key=lambda sec: -best[sec]))}
     return sorted(todo, key=lambda c: rank[c.section])  # sorted стабилен: внутри раздела порядок по приоритету
 
