@@ -25,3 +25,10 @@
 - Likely cause: IP/profile flagged by Avito after the earlier monitor runs; the block page appeared on the home page, before any new traffic pattern from this spike. Needs a human decision (wait for cooldown, proxy, or re-auth by the user via `app.auth`).
 - (f) Decision recorded: `crawl_order` is section-grouped as designed in tech-design §6 (plan N5/m5 accepted).
 - Rerun: after the block clears, `PYTHONIOENCODING=utf-8 .venv/Scripts/python -m scripts.save_fixtures crawl <section_slug>` then `sanitize RAW_NAME FIXTURE_NAME` per fixture.
+
+## ADR-005: Captcha → human solves it, crawl pauses (2026-10-03)
+- Status: accepted (explicit user request)
+- Context: spike I1 hit «Доступ ограничен: проверка безопасности» (HTTP 439) on warm-up; user solved the captcha manually in the bot's browser window (`python -m app.auth`) and asked for this flow.
+- Decision: bot never solves/bypasses captcha. On captcha/block page during /report: send Telegram alert «🧩 Avito просит капчу — пройди её в окне браузера бота», pause the crawl (browser stays open, HEADLESS=false), poll the page every ~30 s for up to CAPTCHA_WAIT_MINUTES (default 30); when the block page is gone → continue; on timeout → stop as before (save state, send collected finds). Supersedes the "stop immediately on block" part of AC-5.x for /report. Monitor (D&G) behaviour unchanged (alert + skip).
+- Plan impact: implement in I11 (block handling); requirements AC-5.1 to be updated accordingly.
+- Retry after the user solved the captcha manually (2026-10-03): first load (home warm-up) returned HTTP 429, title «Доступ ограничен: проблема с IP». Stopped immediately, no retry, browser closed, loads used 1/25 (2 across both attempts). The block is IP-level, not profile-level: a solved captcha does not help. Options for the human: wait for cooldown, change IP/proxy (`AVITO_PROXY`), then rerun the script. (a)(b)(c) remain unverified.
