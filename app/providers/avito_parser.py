@@ -183,7 +183,7 @@ def _image(card: Tag) -> str | None:
     return src or None
 
 
-def parse_search_html(html: str, label: str = "") -> list[Listing]:
+def parse_search_html(html: str, label: str = "", now: datetime | None = None) -> list[Listing]:
     soup = BeautifulSoup(html, "html.parser")
     listings = []
     for card in soup.select(SELECTORS["card"][0]):
@@ -203,7 +203,7 @@ def parse_search_html(html: str, label: str = "") -> list[Listing]:
                 location=_value(_first(card, "location")) or city_from_url(url),
                 seller_name=_value(_first(card, "seller")),
                 category=label or None,
-                published_at=parse_published(_value(_first(card, "date"))),
+                published_at=parse_published(_value(_first(card, "date")), now),
             )
         )
     return listings
