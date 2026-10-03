@@ -51,28 +51,28 @@ real deps: I3←I1 · I5←I4 · I7←I6 · I9←I2,I3,I4,I7 · I9b←I2,I3,I9 �
 
 ## Iteration 2: Config + DB tables  (S)
 **Modify**: `app/config.py` (all §8 vars; `REPORT_SECTIONS` defaults in code to the 25 `TOP` slugs, env only overrides — m11), `app/db.py` (`categories`, `crawl_runs`, `finds` with `views`, `page_date`, `seller_date`, `china_price` — M3), `.env.example`, `tests/test_config.py`. **Create**: `tests/test_db_market.py`.
-**Done**: [ ] defaults parse, env override works [ ] `create_all` adds 3 tables, `watch_rules`/`listings` unchanged (NFR-5) [ ] `test_find_persists_views_page_date_seller_date` (row round-trip) and `test_finds_china_price_nullable` [ ] gate.
+**Done**: [x] defaults parse, env override works [x] `create_all` adds 3 tables, `watch_rules`/`listings` unchanged (NFR-5) [x] `test_find_persists_views_page_date_seller_date` (row round-trip) and `test_finds_china_price_nullable` [x] gate.
 **Depends**: none · **Risk**: low–medium (shared `db.py`).
 
 ## Iteration 3: Parser extensions  (M)
 **Modify**: `app/providers/avito_parser.py` (`SELECTORS`, `TEXT_PATTERNS`, `BLOCK_MARKERS` += «Вы робот»; `promoted_ids`, `parse_subcategories`, `parse_item_page -> ItemStats`, `parse_seller_date`; `parse_published` += «25 сентября», «25 сентября 2025», «1 неделю назад», «месяц / N месяцев назад» as old — m1), `tests/test_parser.py`.
-**Done**: [ ] each function tested on the I1 fixtures [ ] `parse_subcategories` respects `limit` [ ] unparsable date → None, never raises [ ] item page without views counter → None fields [ ] old parser tests unchanged [ ] gate.
+**Done**: [x] each function tested on the I1 fixtures [x] `parse_subcategories` respects `limit` [x] unparsable date → None, never raises [x] item page without views counter → None fields [x] old parser tests unchanged [x] gate.
 **Depends**: 1 · **Risk**: medium (parser shared with monitor).
 
 ## Iteration 4: market_logic core  (M)
 **Create**: `app/services/market_logic.py`, `tests/test_market_logic.py`.
 **Work**: `age_days` (min 1), `norm_title` (XDJ-RX2 ≠ XDJ-RX3), `group_cards` (±20 %), `pick_cards` as ordered groups + running opened-page counter capped at `REPORT_CARDS_PER_SUBCAT` (m2), `is_find`/`is_hot`, vpd age = card-page date with search date as fallback (m3), `date_checked` true when seller check disabled (m4), `crawl_order` **section-grouped, as designed §6 (m5 accepted; one line to decisions.md in I1/ADR-004)**, `sort_finds` with «уже было».
-**Done**: [ ] table tests for each function incl. m2/m3/m4 [ ] `test_crawl_order` (never-crawled first, best_vpd weight, sections grouped, done-in-run excluded) [ ] gate.
+**Done**: [x] table tests for each function incl. m2/m3/m4 [x] `test_crawl_order` (never-crawled first, best_vpd weight, sections grouped, done-in-run excluded) [x] gate.
 **Depends**: none · **Risk**: low.
 
 ## Iteration 5: Formatting  (S)
 **Modify**: `market_logic.py` (`format_find` with `html.escape`, title cap ~120, `format_progress`, `format_summary` with ≤10 errors + «и ещё N», covered days per category, «осталось N подкатегорий», `split_message`), `tests/test_market_logic.py`.
-**Done**: [ ] `test_format_find_fields`: price range, best vpd, «+сегодня», age or «дата не проверена», «выставлено N раз», category, «уже было ДД.ММ» [ ] `test_summary_covered_days`, remaining-count line, error cap [ ] no chunk > 4096, tags intact [ ] hostile title escaped/capped [ ] gate.
+**Done**: [x] `test_format_find_fields`: price range, best vpd, «+сегодня», age or «дата не проверена», «выставлено N раз», category, «уже было ДД.ММ» [x] `test_summary_covered_days`, remaining-count line, error cap [x] no chunk > 4096, tags intact [x] hostile title escaped/capped [x] gate.
 **Depends**: 4 · **Risk**: low.
 
 ## Iteration 6: BrowserGate, Page, scanner hook  (S)
 **Modify**: `app/providers/base.py` (`Page(html,title,final_url)` dataclass — N3; `BrowserGate`: Lock + waiter count, `hold()`, `acquire/release`, `locked`, `contended`; non-abstract `AvitoProvider.fetch` raising `NotImplementedError`), `app/services/scanner.py` (`gate=None`; `async with gate.hold()` around `provider_factory()` only), `tests/test_scanner.py` (+gate tests).
-**Done**: [ ] `gate=None` path identical, old scanner tests green [ ] `test_scan_waits_gate` [ ] `contended` true while a waiter exists [ ] gate.
+**Done**: [x] `gate=None` path identical, old scanner tests green [x] `test_scan_waits_gate` [x] `contended` true while a waiter exists [x] gate.
 **Depends**: none · **Risk**: medium (`scanner.py`, AC-5.4). Rollback: revert the param.
 
 ## Iteration 7: Provider `fetch()`  (S–M)

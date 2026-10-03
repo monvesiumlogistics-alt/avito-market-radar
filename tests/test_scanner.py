@@ -1,11 +1,13 @@
+import asyncio
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import func, select
 
 from app.config import Settings
 from app.db import ListingRow, init_db, sync_default_rule
 from app.models import Listing, SearchUrl
-from app.providers.base import AvitoProvider, ProviderBlocked
+from app.providers.base import AvitoProvider, BrowserGate, ProviderBlocked
 from app.services.scanner import Scanner
 
 
@@ -140,3 +142,43 @@ async def test_paused_skips_scheduled_but_not_forced(tmp_path):
     assert t.provider.calls == []
     await t.scanner.run_watch_rules(force=True)
     assert t.provider.calls == [1]
+
+
+async def test_scan_waits_gate(tmp_path):
+    gate = BrowserGate()
+    t = setup(tmp_path, gate=gate)
+    t.provider.pages[1] = [make("1")]
+    await gate.acquire()  # проверка рынка держит браузер
+    task = asyncio.create_task(t.scanner.run_watch_rules(force=True))
+    await asyncio.sleep(0.05)
+    assert not task.done() and t.provider.calls == [] and gate.contended
+    gate.release()
+    await task
+    assert t.provider.calls == [1] and not gate.locked and not gate.contended
+
+
+async def test_gate_released_after_block_and_error(tmp_path):
+    gate = BrowserGate()
+    t = setup(tmp_path, gate=gate)
+    t.provider.blocked = True
+    await t.scanner.run_watch_rules(force=True)
+    assert not gate.locked
+
+
+async def test_gate_contended_only_while_waiter_exists():
+    gate = BrowserGate()
+    assert not gate.contended
+    await gate.acquire()
+    assert not gate.contended  # владелец — не ждущий
+    waiter = asyncio.create_task(gate.acquire())
+    await asyncio.sleep(0)
+    assert gate.contended
+    gate.release()
+    await waiter
+    assert not gate.contended and gate.locked
+    gate.release()
+
+
+async def test_provider_fetch_default_not_implemented():
+    with pytest.raises(NotImplementedError):
+        await FakeProvider().fetch("https://x")

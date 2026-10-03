@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -10,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db import ListingRow, WatchRule
 from app.models import Listing, SearchUrl
-from app.providers.base import AvitoProvider, ProviderBlocked
+from app.providers.base import AvitoProvider, BrowserGate, ProviderBlocked
 from app.services.matcher import matches
 
 log = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class Scanner:
         max_pages: int = 3,
         retry_delays: tuple[float, ...] = (5, 20),
         send_delay: float = 1.0,
+        gate: BrowserGate | None = None,
     ):
         self.session_factory = session_factory
         self.provider_factory = provider_factory
@@ -44,6 +46,7 @@ class Scanner:
         self.max_pages = max_pages
         self.retry_delays = retry_delays
         self.send_delay = send_delay
+        self.gate = gate
         self.paused = False  # ponytail: пауза в памяти, после рестарта мониторинг снова идёт
         self.blocked = False
         self.last_run_at: datetime | None = None
@@ -71,8 +74,9 @@ class Scanner:
             if not rules:
                 return ["нет правил к проверке"]
             report = []
+            hold = self.gate.hold() if self.gate else contextlib.nullcontext()
             try:
-                async with self.provider_factory() as provider:
+                async with hold, self.provider_factory() as provider:
                     for rule in rules:
                         try:
                             report.append(await self._scan_rule(provider, rule))
