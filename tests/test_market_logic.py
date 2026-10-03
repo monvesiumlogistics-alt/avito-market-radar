@@ -8,12 +8,16 @@ from app.services.market_logic import (
     crawl_order,
     date_checked,
     find_age,
+    format_find,
+    format_progress,
+    format_summary,
     group_cards,
     is_find,
     is_hot,
     norm_title,
     pick_cards,
     sort_finds,
+    split_message,
 )
 
 NOW = datetime(2026, 10, 3, 12, 0)
@@ -108,3 +112,67 @@ def test_sort_finds_hot_then_new_then_vpd():
     ]
     seen = {"c": NOW, "d": NOW}
     assert [x.group_key for x in sort_finds(f, seen)] == ["b", "c", "a", "d"]
+
+
+def find(**kw):
+    base = dict(
+        title="Pioneer XDJ-RX3", url="https://www.avito.ru/x_1", price_min=95000, price_max=110000, vpd=180,
+        today=40, age_days=3.2, date_checked=True, copies=2, hot=True, group_key="g",
+    )  # fmt: skip
+    return NS(**(base | kw))
+
+
+def test_format_find_fields():
+    line = format_find(find(), "DJ-оборудование")
+    assert line == (
+        '🔥 <a href="https://www.avito.ru/x_1">Pioneer XDJ-RX3</a> — 95 000–110 000 ₽ · 180/день (+40 сегодня)'
+        " · 3 дн · выставлено 2 раза · DJ-оборудование"
+    )
+    line = format_find(
+        find(price_max=95000, today=None, date_checked=False, copies=1, hot=False), "Акустика", datetime(2026, 10, 1)
+    )
+    assert line.startswith("<a ") and " — 95 000 ₽ · 180/день · " in line
+    assert "(+" not in line and "дата не проверена" in line and "выставлено 1 раз ·" in line
+    assert line.endswith("Акустика · уже было 01.10")
+
+
+def test_format_find_plural_and_min_age():
+    assert "выставлено 5 раз" in format_find(find(copies=5), "c")
+    assert "выставлено 12 раз ·" in format_find(find(copies=12), "c")
+    assert "выставлено 22 раза" in format_find(find(copies=22), "c")
+    assert " · 1 дн · " in format_find(find(age_days=0.4), "c")
+
+
+def test_format_find_hostile_title_escaped_and_capped():
+    line = format_find(find(title='<script>"x"</script>' + "A" * 500, url='https://a.ru/?q="><b>'), "<i>cat</i>")
+    assert "<script>" not in line and "<i>" not in line and '"><b>' not in line
+    assert len(line) < 120 * 6 + 300
+
+
+def test_format_progress():
+    assert format_progress(7, 25, 23, 210, 600, 12) == (
+        "⏳ Проверка рынка: разделов 7/25 · подкатегорий 23 · загрузок 210/600 · находок 12"
+    )
+
+
+def test_summary_covered_days_remaining_and_error_cap():
+    errors = [f"<boom {i}>" for i in range(13)]
+    text = format_summary(NOW, ["line1", "line2"], [("Телефоны", 2.0), ("Ноутбуки", 3.46)], errors, remaining=140)
+    lines = text.split("\n")
+    assert lines[0] == "<b>Итог проверки — 03.10</b>" and lines[1:3] == ["line1", "line2"]
+    assert "Покрыто не полностью: Телефоны — 2 из 7 дн, Ноутбуки — 3.5 из 7 дн" in lines
+    assert sum(1 for x in lines if x.startswith("ошибка:")) == 10 and "и ещё 3" in lines
+    assert "&lt;boom 0&gt;" in text and "<boom" not in text
+    assert lines[-1] == "Осталось 140 подкатегорий, пойдут первыми в следующий раз."
+    plain = format_summary(NOW, [])
+    assert "Находок нет." in plain and "Осталось" not in plain and "Покрыто" not in plain
+
+
+def test_split_message_chunks_and_tags():
+    lines = [f'<a href="https://x.ru/{i}">row {i}</a> ' + "x" * 200 for i in range(60)]
+    chunks = split_message("\n".join(lines))
+    assert len(chunks) > 1 and all(len(c) <= 4096 for c in chunks)
+    assert "\n".join(chunks) == "\n".join(lines)
+    assert all(c.count("<a ") == c.count("</a>") for c in chunks)
+    assert split_message("short") == ["short"]
+    assert all(len(c) <= 100 for c in split_message("y" * 250, 100))

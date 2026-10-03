@@ -1,17 +1,21 @@
 """Чистая логика проверки рынка: возраст, группы, отбор карточек, фильтры, порядок обхода. Без I/O."""
 
+import html
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from itertools import groupby
 from math import inf
 
 from app.config import Settings
-from app.db import Category
+from app.db import Category, Find
 from app.models import Listing
 from app.services.matcher import normalize
 
 STOP_WORDS = {"новый", "новая", "новое", "новые", "оригинал", "original", "new", "шт", "комплект"}
 GROUP_PRICE_SPREAD = 1.2  # копии одного товара: цена до +20 % от самой дешёвой в группе
+TITLE_CAP = 120  # одна строка находки никогда не упрётся в лимит Telegram
+MAX_ERRORS = 10
+TG_LIMIT = 4096
 
 
 def age_days(published_at: datetime, now: datetime) -> float:
@@ -96,3 +100,72 @@ def crawl_order(cats: Sequence[Category], run_id: int, now: datetime) -> list[Ca
 def sort_finds(finds: Sequence, seen: Mapping[str, datetime]) -> list:
     """🔥 первыми, затем новые перед «уже было», затем по vpd. finds: .hot .vpd .group_key; seen: group_key -> дата."""
     return sorted(finds, key=lambda f: (not f.hot, f.group_key in seen, -f.vpd))
+
+
+def _rub(n: int) -> str:
+    return f"{n:,}".replace(",", " ")
+
+
+def _times(n: int) -> str:
+    return "раз" if n % 10 in (0, 1) or n % 10 >= 5 or 11 <= n % 100 <= 14 else "раза"
+
+
+def format_find(f: Find, category: str, seen_on: datetime | None = None) -> str:
+    """Одна строка = одна группа. Каждая строка самодостаточна по тегам (резать можно по границам строк)."""
+    price = f"{_rub(f.price_min)} ₽" if f.price_min == f.price_max else f"{_rub(f.price_min)}–{_rub(f.price_max)} ₽"
+    views = f"{f.vpd}/день" + (f" (+{f.today} сегодня)" if f.today is not None else "")
+    age = f"{max(round(f.age_days), 1)} дн" if f.date_checked else "дата не проверена"
+    parts = [price, views, age, f"выставлено {f.copies} {_times(f.copies)}", html.escape(category)]
+    if seen_on:
+        parts.append(f"уже было {seen_on:%d.%m}")
+    link = f'<a href="{html.escape(f.url)}">{html.escape(f.title[:TITLE_CAP])}</a>'
+    return f"{'🔥 ' if f.hot else ''}{link} — " + " · ".join(parts)
+
+
+def format_progress(sections_done: int, sections_total: int, subcats: int, loads: int, budget: int, finds: int) -> str:
+    return (
+        f"⏳ Проверка рынка: разделов {sections_done}/{sections_total} · подкатегорий {subcats}"
+        f" · загрузок {loads}/{budget} · находок {finds}"
+    )
+
+
+def format_summary(
+    day: datetime,
+    find_lines: Sequence[str],
+    covered: Sequence[tuple[str, float]] = (),
+    errors: Sequence[str] = (),
+    remaining: int = 0,
+    max_age_days: int = 7,
+) -> str:
+    """Итог прогона. covered: (подкатегория, дней покрыто) только там, где неделя не вошла в лимит страниц."""
+    lines = [f"<b>Итог проверки — {day:%d.%m}</b>", *(find_lines or ["Находок нет."])]
+    if covered:
+        lines.append(
+            "Покрыто не полностью: "
+            + ", ".join(f"{html.escape(n)} — {round(d, 1):g} из {max_age_days} дн" for n, d in covered)
+        )
+    lines += [f"ошибка: {html.escape(e[:200])}" for e in errors[:MAX_ERRORS]]
+    if len(errors) > MAX_ERRORS:
+        lines.append(f"и ещё {len(errors) - MAX_ERRORS}")
+    if remaining:
+        lines.append(f"Осталось {remaining} подкатегорий, пойдут первыми в следующий раз.")
+    return "\n".join(lines)
+
+
+def split_message(text: str, limit: int = TG_LIMIT) -> list[str]:
+    """Режет по границам строк; строка длиннее limit (не бывает: заголовки обрезаны) режется жёстко."""
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        while len(line) > limit:
+            line, rest = line[:limit], line[limit:]
+            chunks.append(line)
+            line = rest
+        if current and len(current) + 1 + len(line) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = f"{current}\n{line}" if current else line
+    if current:
+        chunks.append(current)
+    return chunks
