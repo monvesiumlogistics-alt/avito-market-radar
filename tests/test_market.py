@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.config import Settings
 from app.db import Category, CrawlRun, Find, init_db
-from app.providers.base import AvitoProvider, Page, ProviderBlocked
+from app.providers.base import AvitoProvider, BrowserGate, Page, ProviderBlocked
 from app.services.market import BudgetExhausted, MarketCrawler, StopRequested
 
 NOW = datetime(2026, 10, 3, 12, 0)
@@ -60,12 +60,14 @@ def seller_html(i, date: str) -> str:
 class FakeProvider(AvitoProvider):
     def __init__(self, pages: dict):
         self.pages, self.calls = pages, []
+        self.events: list = []  # общий журнал с уведомителем
 
     async def search(self, search, page=1):
         raise AssertionError
 
     async def fetch(self, url, ready_selector=None):
         self.calls.append(url)
+        self.events.append(("fetch", url))
         res = "<html></html>" if "s=104" in url and url not in self.pages else self.pages[url]  # KeyError = ошибка
         if isinstance(res, BaseException):
             raise res
@@ -420,3 +422,232 @@ async def test_discover_error_skipped_other_sections_continue(tmp_path):
     )
     await t.crawler.discover_sections()
     assert len(rows(t, Category)) == 8 and len(t.crawler.errors) == 1
+
+
+# --- жизненный цикл (I10) ---
+
+
+class RecNotifier:
+    def __init__(self, events):
+        self.events, self.sent, self.edits, self.fail = events, [], [], False
+
+    async def send_text(self, text):
+        self.events.append(("send", text))
+        if self.fail:
+            return None
+        self.sent.append(text)
+        return len(self.sent)
+
+    async def edit_text(self, message_id, text):
+        self.events.append(("edit", text))
+        self.edits.append((message_id, text))
+
+
+def life(tmp_path, cats: dict[str, list[int]], gate=None, **settings):
+    """cats: раздел -> просмотры карточки по подкатегориям (у каждой одна карточка с находкой)."""
+    sf = init_db(f"sqlite:///{tmp_path}/t.db")
+    s = Settings(_env_file=None, report_sections=",".join(cats), check_seller_date=False, **settings)
+    pages: dict = {}
+    with sf() as db:
+        for sec, views in cats.items():
+            for n, v in enumerate(views, 1):
+                url = f"https://www.avito.ru/all/{sec}/c{n}-H"
+                db.add(Category(section=sec, name=f"{sec} {n}", url=url, discovered_at=NOW))
+                cid = f"{sec}{n}"
+                pages[f"{url}?s=104&pmin=10000"] = search_html((cid, f"Item {sec} {n}", 20000, "1 день назад"))
+                pages[card_url(cid)] = item_html(v)
+        db.commit()
+    provider = FakeProvider(pages)
+    t = SimpleNamespace(sf=sf, provider=provider, pages=pages, now=[NOW], settings=s)
+    t.notifier = RecNotifier(provider.events)
+    t.crawler = MarketCrawler(sf, lambda: provider, t.notifier, s, gate=gate, clock=lambda: t.now[0])
+    t.crawler.send_delay = 0
+    return t
+
+
+def runs(t) -> list[CrawlRun]:
+    return rows(t, CrawlRun)
+
+
+def summary_text(t) -> str:
+    return [x for x in t.notifier.sent if "Итог проверки" in x][-1]
+
+
+def search_calls(t, sec_n: str) -> int:
+    return sum(1 for u in t.provider.calls if f"/{sec_n}-H?s=104" in u)
+
+
+def url_of(sec_n: str) -> str:
+    return f"https://www.avito.ru/all/{sec_n[0]}/{sec_n[1:]}-H?s=104&pmin=10000"
+
+
+def hook(t, url: str, fn) -> None:
+    """При загрузке url выполнить fn() и отдать прежний HTML."""
+    html = t.pages[url]
+    t.pages[url] = lambda: fn() or html
+
+
+async def test_start_new(tmp_path):
+    t = life(tmp_path, {"A": [900]})
+    assert t.crawler.start() == "Начинаю проверку рынка"
+    await t.crawler._task
+    (run,) = runs(t)
+    assert run.status == "done" and run.finished_at and run.finds_count == 1
+    assert run.loads == t.crawler.loads == 4  # warm-up + выдача (2 стр.) + карточка
+    assert t.notifier.sent[0].startswith("⏳ Проверка рынка") and "Итог проверки" in summary_text(t)
+    assert not t.crawler.running
+
+
+async def test_already_running_shows_progress(tmp_path):
+    t = life(tmp_path, {"A": [900]})
+    t.crawler.start()
+    again = t.crawler.start()
+    assert again.startswith("Проверка уже идёт\n⏳ Проверка рынка: разделов 0/1")
+    await t.crawler._task
+    assert len(runs(t)) == 1
+
+
+async def test_budget_stop_remaining_msg_and_loads_persist(tmp_path):
+    t = life(tmp_path, {"A": [900, 900, 900]}, report_budget=6)
+    t.crawler.start()
+    await t.crawler._task
+    (run,) = runs(t)
+    assert run.status == "budget" and run.loads == 6  # частичная подкатегория тоже учтена
+    text = summary_text(t)
+    assert "Бюджет загрузок исчерпан." in text and "Осталось 2 подкатегорий, пойдут первыми" in text
+
+
+async def _stopped_run(tmp_path):
+    t = life(tmp_path, {"A": [900, 900]})
+    hook(t, url_of("Ac2"), lambda: setattr(t.crawler, "stop_requested", True))  # /stop на второй подкатегории
+    t.crawler.start()
+    await t.crawler._task
+    t.pages[url_of("Ac2")] = search_html(("A2", "Item A 2", 20000, "1 день назад"))
+    return t
+
+
+async def test_stop_summary(tmp_path):
+    t = await _stopped_run(tmp_path)
+    (run,) = runs(t)
+    assert run.status == "stopped" and run.loads == 5  # warm-up, 3 загрузки c1, 1 загрузка c2 (прервана)
+    assert "остановлена" in summary_text(t) and "Item A 1" in summary_text(t)
+    with t.sf() as db:
+        assert db.scalars(select(Category).where(Category.name == "A 2")).one().last_run_id is None
+
+
+async def test_resume_lt_12h_no_repeats(tmp_path):
+    t = await _stopped_run(tmp_path)
+    t.now[0] += timedelta(hours=11)
+    assert t.crawler.start() == "Продолжаю проверку (пройдено подкатегорий: 1)"
+    await t.crawler._task
+    (run,) = runs(t)
+    assert run.status == "done" and run.finds_count == 2 and run.loads > 5
+    assert search_calls(t, "c1") == 2  # две страницы выдачи в первом заходе, при продолжении не открывалась
+    assert sum(1 for x in t.notifier.sent if x.startswith("⏳")) == 2  # на продолжении новое сообщение о прогрессе
+
+
+async def test_new_run_gt_12h(tmp_path):
+    t = await _stopped_run(tmp_path)
+    t.now[0] += timedelta(hours=13)
+    assert t.crawler.start() == "Начинаю проверку рынка"
+    await t.crawler._task
+    assert [r.status for r in runs(t)] == ["stopped", "done"]
+
+
+async def test_progress_once_per_minute(tmp_path):
+    t = life(tmp_path, {"A": [900, 900, 900]})
+    hook(t, url_of("Ac2"), lambda: t.now.__setitem__(0, NOW + timedelta(seconds=61)))
+    t.crawler.start()
+    await t.crawler._task
+    assert sum(1 for x in t.notifier.sent if x.startswith("⏳")) == 1
+    assert len(t.notifier.edits) == 1 and t.notifier.edits[0][1].startswith("⏳")  # до c2 тихо, после c2 одна правка
+
+
+async def test_portion_after_section_and_final_sorted(tmp_path):
+    t = life(tmp_path, {"A": [600, 900], "B": [450]})  # vpd 200, 300 / 150
+    t.crawler.start()
+    await t.crawler._task
+    ev = t.provider.events
+    portion_a = next(i for i, e in enumerate(ev) if e[0] == "send" and "A — находки" in e[1])
+    first_b = next(i for i, e in enumerate(ev) if e[0] == "fetch" and "/B/" in e[1])
+    assert portion_a < first_b  # порция сразу после раздела A, до начала B
+    text = next(e[1] for e in ev if e[0] == "send" and "A — находки" in e[1])
+    assert text.index("Item A 2") < text.index("Item A 1")  # по vpd
+    final = summary_text(t).split("\n")
+    order = [next(i for i, ln in enumerate(final) if f"Item {x}" in ln) for x in ("A 2", "A 1", "B 1")]
+    assert order == sorted(order)
+    with t.sf() as db:
+        assert all(f.sent for f in db.scalars(select(Find)))
+
+
+async def test_failed_telegram_portion_stays_unsent_but_in_summary(tmp_path):
+    t = life(tmp_path, {"A": [900]})
+    t.notifier.fail = True
+    t.crawler.start()
+    await t.crawler._task
+    assert runs(t)[0].status == "done" and not rows(t)[0].sent
+    assert any(e[0] == "send" and "Item A 1" in e[1] for e in t.provider.events)
+
+
+async def test_already_seen_from_db_marks_date(tmp_path):
+    t = life(tmp_path, {"A": [900, 450]})  # c1: vpd 300, c2: vpd 150
+    with t.sf() as db:
+        old = CrawlRun(started_at=datetime(2026, 9, 20), status="done")
+        db.add(old)
+        db.flush()
+        cid = db.scalars(select(Category).where(Category.name == "A 1")).one().id
+        db.add(
+            Find(
+                run_id=old.id, category_id=cid, group_key="item a 1", title="x", price_min=1, price_max=1, vpd=200,
+                age_days=2, date_checked=True, copies=1, url="u", external_id="9", hot=True,
+                created_at=datetime(2026, 9, 20, 10), sent=True,
+            )
+        )  # fmt: skip
+        db.commit()
+    t.crawler.start()
+    await t.crawler._task
+    lines = summary_text(t).split("\n")
+    i_new, i_seen = (next(i for i, ln in enumerate(lines) if f"Item A {n}" in ln) for n in (2, 1))
+    assert i_new < i_seen and "уже было 20.09" in lines[i_seen] and "уже было" not in lines[i_new]
+
+
+def test_mark_interrupted(tmp_path):
+    t = life(tmp_path, {"A": [900]})
+    with t.sf() as db:
+        db.add_all([CrawlRun(started_at=NOW, status="running"), CrawlRun(started_at=NOW, status="done")])
+        db.commit()
+    t.crawler.mark_interrupted()
+    assert [r.status for r in runs(t)] == ["interrupted", "done"]
+
+
+async def test_stop_command_replies(tmp_path):
+    t = life(tmp_path, {"A": [900]})
+    assert t.crawler.stop() == "Проверка не идёт"
+    t.crawler.start()
+    assert t.crawler.stop().startswith("Останавливаю")
+    await t.crawler._task
+    assert runs(t)[0].status == "stopped"
+
+
+async def test_crash_marks_failed_and_releases_gate(tmp_path):
+    gate = BrowserGate()
+    t = life(tmp_path, {"A": [900]}, gate=gate)
+
+    def boom():
+        raise RuntimeError("браузер не стартовал")
+
+    t.crawler.provider_factory = boom
+    t.crawler.start()
+    await t.crawler._task
+    (run,) = runs(t)
+    assert run.status == "failed" and "упала" in summary_text(t) and not gate.locked
+
+
+async def test_gate_held_during_run_and_released(tmp_path):
+    gate = BrowserGate()
+    t = life(tmp_path, {"A": [900]}, gate=gate)
+    seen = []
+    hook(t, url_of("Ac1"), lambda: seen.append(gate.locked))
+    t.crawler.start()
+    await t.crawler._task
+    assert seen == [True] and not gate.locked

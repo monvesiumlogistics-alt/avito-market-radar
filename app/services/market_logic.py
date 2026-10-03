@@ -136,9 +136,10 @@ def format_summary(
     errors: Sequence[str] = (),
     remaining: int = 0,
     max_age_days: int = 7,
+    note: str | None = None,
 ) -> str:
     """Итог прогона. covered: (подкатегория, дней покрыто) только там, где неделя не вошла в лимит страниц."""
-    lines = [f"<b>Итог проверки — {day:%d.%m}</b>", *(find_lines or ["Находок нет."])]
+    lines = [f"<b>Итог проверки — {day:%d.%m}</b>", *([note] if note else []), *(find_lines or ["Находок нет."])]
     if covered:
         lines.append(
             "Покрыто не полностью: "

@@ -1,13 +1,14 @@
 """Проверка рынка: обход подкатегорий Avito, поиск товаров с высоким спросом (просмотры в день)."""
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings, split_csv
@@ -28,16 +29,31 @@ from app.providers.base import AvitoProvider, ProviderBlocked
 from app.services.market_logic import (
     age_days,
     calc_vpd,
+    crawl_order,
     date_checked,
     find_age,
+    format_find,
+    format_progress,
+    format_summary,
     group_cards,
     is_find,
     is_hot,
     norm_title,
     pick_cards,
+    sort_finds,
+    split_message,
 )
 
 log = logging.getLogger(__name__)
+
+RESUMABLE = ("running", "stopped", "blocked", "interrupted", "failed")  # budget/done: следующий прогон новый
+PROGRESS_EVERY = timedelta(minutes=1)
+STATUS_NOTES = {
+    "stopped": "Проверка остановлена, продолжу по /report.",
+    "blocked": "⚠️ Avito ограничил доступ, продолжу по /report.",
+    "failed": "⚠️ Проверка упала, найденное сохранено.",
+    "budget": "Бюджет загрузок исчерпан.",
+}
 
 SUBCAT_REFRESH = timedelta(days=30)  # подкатегории раздела перечитываем не чаще
 FETCH_TIMEOUT = 120  # с на одну загрузку: зависший Playwright не должен держать браузер (m9)
@@ -92,6 +108,221 @@ class MarketCrawler:
         self.run_id: int | None = None
         self.loads = 0
         self.errors: list[str] = []
+        self.send_delay = 1.0  # пауза между кусками длинного сообщения (лимиты Telegram); в тестах 0
+        self._task: asyncio.Task | None = None
+        self._owns_gate = False
+        self._progress_at: datetime | None = None
+        self._progress_id: int | None = None
+
+    # --- жизненный цикл ---
+
+    @property
+    def running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+    def start(self) -> str:
+        """/report: ответ пользователю; обход идёт в фоновой задаче."""
+        if self.running:
+            return "Проверка уже идёт\n" + self._progress_text()
+        now, s = self.clock(), self.settings
+        with self.session_factory() as db:
+            last = db.scalars(select(CrawlRun).order_by(CrawlRun.id.desc()).limit(1)).first()
+            resume = (
+                last is not None
+                and last.status in RESUMABLE
+                and last.started_at > now - timedelta(hours=s.report_resume_hours)
+            )
+            if resume:
+                run = last
+                run.status, run.finished_at = "running", None
+                done = db.scalar(select(func.count()).select_from(Category).where(Category.last_run_id == run.id))
+                reply = f"Продолжаю проверку (пройдено подкатегорий: {done})"
+            else:
+                run = CrawlRun(started_at=now)
+                db.add(run)
+                reply = "Начинаю проверку рынка"
+            db.commit()
+            self.run_id, self.loads = run.id, run.loads
+        self.stop_requested, self.errors = False, []
+        self._progress_at = self._progress_id = None  # на продолжении новое сообщение о прогрессе (m6)
+        self._task = asyncio.create_task(self._run())
+        return reply
+
+    def stop(self) -> str:
+        if not self.running:
+            return "Проверка не идёт"
+        self.stop_requested = True
+        return "Останавливаю после текущей страницы…"
+
+    def mark_interrupted(self) -> None:
+        """При старте бота: зависший 'running' (бот перезапустили) -> 'interrupted', можно продолжить."""
+        with self.session_factory() as db:
+            db.execute(
+                update(CrawlRun)
+                .where(CrawlRun.status == "running")
+                .values(status="interrupted", finished_at=self.clock())
+            )
+            db.commit()
+
+    async def _run(self) -> None:
+        status = "interrupted"  # отмена задачи оставит именно его
+        try:
+            try:
+                if self.gate:
+                    await self.gate.acquire()
+                    self._owns_gate = True
+                self.provider = self.provider_factory()
+                await self.provider.__aenter__()
+                self.loads += 1  # первая загрузка включает warm-up: два goto (N7)
+                await self._send_progress(force=True)
+                await self.discover_sections()
+                await self._crawl_all()
+                status = "done"
+            except StopRequested:
+                status = "stopped"
+            except BudgetExhausted:
+                status = "budget"
+            except ProviderBlocked as e:
+                log.error("[MARKET] блок: %s", e)
+                status = "blocked"
+            except Exception:
+                log.exception("[MARKET] прогон упал")
+                status = "failed"
+        finally:
+            if self.provider is not None:
+                with contextlib.suppress(Exception):
+                    await self.provider.__aexit__(None, None, None)
+                self.provider = None
+            if self._owns_gate:
+                self.gate.release()
+                self._owns_gate = False
+            self._finish(status)
+        try:
+            await self._summary(status)
+        except Exception:
+            log.exception("[MARKET] итог не отправлен")
+
+    def _finish(self, status: str) -> None:
+        """Статус и run.loads пишутся на любом выходе, в том числе при отмене (N7)."""
+        with self.session_factory() as db:
+            run = db.get(CrawlRun, self.run_id)
+            run.status, run.finished_at, run.loads = status, self.clock(), self.loads
+            db.commit()
+
+    async def _crawl_all(self) -> None:
+        with self.session_factory() as db:
+            order = crawl_order(self._categories(db), self.run_id, self.clock())
+        for i, cat in enumerate(order):
+            if self.stop_requested:
+                raise StopRequested
+            if self.loads >= self.settings.report_budget:
+                raise BudgetExhausted
+            await self.crawl_subcategory(cat.id)
+            await self._send_progress()
+            if i + 1 == len(order) or order[i + 1].section != cat.section:
+                await self._portion(cat.section)
+
+    def _categories(self, db) -> list[Category]:
+        return list(db.scalars(select(Category).where(Category.section.in_(split_csv(self.settings.report_sections)))))
+
+    # --- сообщения ---
+
+    def _progress_text(self) -> str:
+        with self.session_factory() as db:
+            cats = self._categories(db)
+            finds = db.get(CrawlRun, self.run_id).finds_count
+        sections: dict[str, list[bool]] = {}
+        for c in cats:
+            sections.setdefault(c.section, []).append(c.last_run_id == self.run_id)
+        done = sum(all(v) for v in sections.values())
+        subcats = sum(c.last_run_id == self.run_id for c in cats)
+        return format_progress(done, len(sections), subcats, self.loads, self.settings.report_budget, finds)
+
+    async def _send_progress(self, force: bool = False) -> None:
+        """Одно сообщение, правится не чаще раза в минуту (AC-4.1)."""
+        now = self.clock()
+        if not force and self._progress_at and now - self._progress_at < PROGRESS_EVERY:
+            return
+        self._progress_at = now
+        text = self._progress_text()
+        if self._progress_id is None:
+            self._progress_id = await self.notifier.send_text(text)
+            with self.session_factory() as db:
+                db.get(CrawlRun, self.run_id).progress_msg_id = self._progress_id
+                db.commit()
+        else:
+            await self.notifier.edit_text(self._progress_id, text)
+
+    async def _send(self, text: str) -> bool:
+        ok = True
+        for i, chunk in enumerate(split_message(text)):
+            if i:
+                await asyncio.sleep(self.send_delay)
+            ok &= await self.notifier.send_text(chunk) is not None
+        return ok
+
+    def _lines(self, db, finds: list[Find]) -> list[str]:
+        """Строки находок: 🔥 первыми, «уже было» (находка в другом прогоне той же подкатегории) после новых."""
+        seen: dict[str, datetime] = {}
+        for f in finds:
+            first = db.scalar(
+                select(func.min(Find.created_at)).where(
+                    Find.group_key == f.group_key, Find.category_id == f.category_id, Find.run_id != f.run_id
+                )
+            )
+            if first:
+                seen[f.group_key] = first
+        return [
+            format_find(f, db.get(Category, f.category_id).name, seen.get(f.group_key)) for f in sort_finds(finds, seen)
+        ]
+
+    async def _portion(self, section: str) -> None:
+        """Находки только что пройденного раздела (AC-4.2)."""
+        with self.session_factory() as db:
+            finds = list(
+                db.scalars(
+                    select(Find)
+                    .join(Category, Find.category_id == Category.id)
+                    .where(Find.run_id == self.run_id, Find.sent.is_(False), Category.section == section)
+                )
+            )
+            if not finds:
+                return
+            text = "\n".join([f"<b>{section.replace('_', ' ')} — находки</b>", *self._lines(db, finds)])
+            ids = [f.id for f in finds]
+        if await self._send(text):  # Telegram не принял — sent=0, находки всё равно попадут в итог
+            self._mark_sent(ids)
+
+    def _mark_sent(self, ids: list[int]) -> None:
+        with self.session_factory() as db:
+            db.execute(update(Find).where(Find.id.in_(ids)).values(sent=True))
+            db.commit()
+
+    async def _summary(self, status: str) -> None:
+        s = self.settings
+        with self.session_factory() as db:
+            finds = list(db.scalars(select(Find).where(Find.run_id == self.run_id)))
+            cats = self._categories(db)
+            done = [c for c in cats if c.last_run_id == self.run_id]
+            covered = [
+                (c.name, c.last_days_covered)
+                for c in done
+                if c.last_status == "ok" and c.last_days_covered is not None
+                if c.last_days_covered < s.report_max_age_days
+            ]
+            remaining = len(cats) - len(done)
+            text = format_summary(
+                self.clock(),
+                self._lines(db, finds),
+                covered,
+                self.errors,
+                remaining if status != "done" else 0,
+                s.report_max_age_days,
+                STATUS_NOTES.get(status),
+            )
+            ids = [f.id for f in finds]
+        if await self._send(text):
+            self._mark_sent(ids)
 
     # --- загрузки ---
 
