@@ -77,7 +77,7 @@ real deps: I3←I1 · I5←I4 · I7←I6 · I9←I2,I3,I4,I7 · I9b←I2,I3,I9 �
 
 ## Iteration 7: Provider `fetch()`  (S–M)
 **Modify**: `app/providers/avito_browser.py` (`fetch(url, ready_selector=None) -> Page`: warm-up, pause, `is_blocked`, goto 403/429 → `ProviderBlocked` (m7); `__aexit__` resets `_ctx/_pw/_warmed`, idempotent (M1); no provider load counter (M2); `search()` thin wrapper), `tests/test_provider.py` (status→blocked helper; double `__aexit__` with a stub).
-**Done**: [ ] existing tests green, `search()` behaviour unchanged [ ] double `__aexit__` safe [ ] gate, committed [ ] orchestrator restarts bot, one D&G scan verified.
+**Done**: [x] existing tests green, `search()` behaviour unchanged [x] double `__aexit__` safe [x] gate, committed [ ] orchestrator restarts bot, one D&G scan verified.
 **Depends**: 6 · **Risk**: medium (live monitor path).
 
 ## Iteration 8: Notifier additions  (S)

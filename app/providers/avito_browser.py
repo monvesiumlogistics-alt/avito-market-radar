@@ -1,5 +1,7 @@
+import asyncio
 import contextlib
 import logging
+import random
 from datetime import datetime
 from pathlib import Path
 
@@ -8,19 +10,33 @@ from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from app.models import Listing, SearchUrl
 from app.providers.avito_parser import BASE_URL, SELECTORS, is_blocked, parse_search_html, with_page
-from app.providers.base import AvitoProvider, ProviderBlocked
+from app.providers.base import AvitoProvider, Page, ProviderBlocked
 
 log = logging.getLogger(__name__)
+
+BLOCK_STATUSES = {403, 429, 439}  # 439 — капча «проверка безопасности», 429 — «проблема с IP» (ADR-004)
+
+
+def status_blocked(status: int | None) -> bool:
+    return status in BLOCK_STATUSES
 
 
 class AvitoBrowserProvider(AvitoProvider):
     """Обычный Chromium с постоянным профилем (cookies/логин из `python -m app.auth`). Без обходов защиты."""
 
-    def __init__(self, profile_path: str, headless: bool, proxy: dict | None = None, debug_dir: str = "./data/debug"):
+    def __init__(
+        self,
+        profile_path: str,
+        headless: bool,
+        proxy: dict | None = None,
+        debug_dir: str = "./data/debug",
+        delay: tuple[float, float] = (0, 0),  # пауза перед загрузкой, с; у мониторинга нет, у проверки рынка 2–5
+    ):
         self.profile_path = profile_path
         self.headless = headless
         self.proxy = proxy
         self.debug_dir = Path(debug_dir)
+        self.delay = delay
         self._pw: Playwright | None = None
         self._ctx: BrowserContext | None = None
         self._warmed = False
@@ -42,32 +58,44 @@ class AvitoBrowserProvider(AvitoProvider):
         return self
 
     async def __aexit__(self, *exc) -> None:
-        if self._ctx:
-            await self._ctx.close()
-        if self._pw:
-            await self._pw.stop()
+        """Идемпотентен; после выхода экземпляр можно войти заново (свежий warm-up)."""
+        ctx, pw, self._ctx, self._pw, self._warmed = self._ctx, self._pw, None, None, False
+        if ctx:
+            await ctx.close()
+        if pw:
+            await pw.stop()
 
-    async def search(self, search: SearchUrl, page: int = 1) -> list[Listing]:
+    async def fetch(self, url: str, ready_selector: str | None = None) -> Page:
         assert self._ctx, "use `async with provider:`"
         tab = await self._ctx.new_page()
         try:
             if not self._warmed:
                 # Сразу на выдачу Avito пускает хуже: сначала главная, как обычный человек.
-                await tab.goto(BASE_URL, wait_until="domcontentloaded", timeout=45_000)
+                resp = await tab.goto(BASE_URL, wait_until="domcontentloaded", timeout=45_000)
+                if status_blocked(resp and resp.status):
+                    raise ProviderBlocked(f"Avito: HTTP {resp.status}")
                 await tab.wait_for_timeout(2_000)
                 self._warmed = True
-            await tab.goto(with_page(search.url, page), wait_until="domcontentloaded", timeout=45_000)
-            with contextlib.suppress(PlaywrightTimeout):  # пустая выдача или блок: разберёмся ниже
-                await tab.wait_for_selector(SELECTORS["card"][0], timeout=15_000)
-            html, title = await tab.content(), await tab.title()
+            if self.delay[1]:
+                await asyncio.sleep(random.uniform(*self.delay))
+            resp = await tab.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            status = resp.status if resp else None
+            if ready_selector:
+                with contextlib.suppress(PlaywrightTimeout):  # пустая выдача или блок: разберёмся ниже
+                    await tab.wait_for_selector(ready_selector, timeout=15_000)
+            page = Page(await tab.content(), await tab.title(), tab.url)
         finally:
             await tab.close()
 
-        if is_blocked(html, title):
-            raise ProviderBlocked(title or "Avito: доступ ограничен")
-        listings = parse_search_html(html, search.label)
+        if status_blocked(status) or is_blocked(page.html, page.title):
+            raise ProviderBlocked(page.title or f"Avito: доступ ограничен (HTTP {status})")
+        return page
+
+    async def search(self, search: SearchUrl, page: int = 1) -> list[Listing]:
+        fetched = await self.fetch(with_page(search.url, page), SELECTORS["card"][0])
+        listings = parse_search_html(fetched.html, search.label)
         if not listings:
-            self._dump(html)
+            self._dump(fetched.html)
         return listings
 
     def _dump(self, html: str) -> None:
