@@ -5,7 +5,4 @@ pydantic-settings>=2.15
 APScheduler>=3.11,<4
 playwright>=1.63
 beautifulsoup4>=4.15
-pytest>=9
-pytest-asyncio>=1.4
-ruff>=0.16
 tzdata>=2024.1; sys_platform == "win32"

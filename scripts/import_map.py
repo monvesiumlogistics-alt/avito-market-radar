@@ -1,4 +1,4 @@
-"""Карта Avito из avito_niche/catalog.csv -> таблица categories (подкатегории + стартовый приоритет).
+"""Карта Avito из catalog.csv (по умолчанию data/catalog.csv) -> таблица categories (подкатегории + стартовый приоритет).
 
 Запуск (можно при работающем боте, пишет только в БД):
     PYTHONIOENCODING=utf-8 .venv/Scripts/python -m scripts.import_map [путь к catalog.csv]
@@ -8,6 +8,7 @@
 """
 
 import csv
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +20,7 @@ from app.config import settings
 from app.db import Category, init_db
 from app.providers.avito_parser import BASE_URL
 
-DEFAULT_PATH = Path(r"C:\Users\Administrator\Desktop\avito_niche\catalog.csv")
+DEFAULT_PATH = Path("data/catalog.csv")  # data/ не в git: карта лежит локально (или путь аргументом / MAP_CSV)
 
 
 def import_map(session_factory: sessionmaker, path: Path, now: datetime | None = None) -> int:
@@ -42,6 +43,6 @@ def import_map(session_factory: sessionmaker, path: Path, now: datetime | None =
 
 
 if __name__ == "__main__":
-    src = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PATH
+    src = Path(sys.argv[1] if len(sys.argv) > 1 else os.getenv("MAP_CSV", DEFAULT_PATH))
     n = import_map(init_db(settings.database_url), src)
     print(f"импортировано подкатегорий: {n} из {src}")

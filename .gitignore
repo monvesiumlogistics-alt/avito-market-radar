@@ -1,7 +1,49 @@
+# --- секреты и локальная конфигурация ---
+.env
+.env.*
+!.env.example
+
+# --- окружения ---
+venv/
 .venv/
+env/
+
+# --- Python ---
 __pycache__/
 *.pyc
-.env
-data/
+*.pyo
 .pytest_cache/
 .ruff_cache/
+
+# --- IDE / ОС ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# --- логи ---
+*.log
+logs/
+
+# --- базы данных ---
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# --- браузер, сессии, куки (профиль Playwright = авторизация Avito) ---
+cookies*
+session*
+sessions/
+browser_data/
+browser_profile/
+user_data/
+playwright/.auth/
+
+# --- выгрузки ---
+downloads/
+exports/
+*.csv
+
+# --- данные проекта: SQLite, профиль браузера Avito, debug-HTML, сырые страницы, логи бота ---
+data/
