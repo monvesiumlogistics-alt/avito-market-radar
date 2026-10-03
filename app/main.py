@@ -19,7 +19,7 @@ from app.telegram.handlers import build_router
 
 
 def setup_logging(level: str) -> None:
-    sys.stdout.reconfigure(encoding="utf-8")  # консоль Windows по умолчанию cp1252
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)  # cp1252 по умолчанию; построчно: лог не теряется
     logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s", stream=sys.stdout)
     logging.getLogger("aiogram.event").setLevel(logging.WARNING)  # не спамить каждым апдейтом
 
