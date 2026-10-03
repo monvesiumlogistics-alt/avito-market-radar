@@ -280,14 +280,16 @@ class MarketCrawler:
 
     def _progress_text(self, status: str | None = None) -> str:
         with self.session_factory() as db:
-            subcats = len([c for c in self._categories(db) if c.last_run_id == self.run_id])
+            cats = self._categories(db)
+            subcats = len([c for c in cats if c.last_run_id == self.run_id])
             finds = db.get(CrawlRun, self.run_id).finds_count
             hot = db.scalar(
                 select(func.count()).select_from(Find).where(Find.run_id == self.run_id, Find.hot.is_(True))
             )
         elapsed = (self.clock() - self._started).total_seconds() if self._started else 0
         return format_progress(
-            elapsed, self.loads, self.settings.report_budget, subcats, finds, hot or 0, self._current, status
+            elapsed, self.loads, self.settings.report_budget, subcats, finds, hot or 0, self._current, status,
+            total=len(cats), errors=len(self.errors),
         )
 
     async def _tick(self) -> None:

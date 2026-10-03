@@ -514,7 +514,7 @@ async def test_start_new(tmp_path):
     (run,) = runs(t)
     assert run.status == "done" and run.finished_at and run.finds_count == 1
     assert run.loads == t.crawler.loads == 4  # warm-up + выдача (2 стр.) + карточка
-    assert t.notifier.sent[0].startswith("<b>⏳ Проверка рынка") and "📊 Проверка рынка" in summary_text(t)
+    assert t.notifier.sent[0].startswith("<b>🔎 Проверка рынка") and "📊 Проверка рынка" in summary_text(t)
     assert not t.crawler.running
 
 
@@ -522,7 +522,7 @@ async def test_already_running_shows_progress(tmp_path):
     t = life(tmp_path, {"A": [900]})
     t.crawler.start()
     again = t.crawler.start()
-    assert again.startswith("Проверка уже идёт\n<b>⏳ Проверка рынка</b>\n<code>[□")
+    assert again.startswith("Проверка уже идёт\n<b>🔎 Проверка рынка</b>\n\n<code>▱")
     await t.crawler._task
     assert len(runs(t)) == 1
 
@@ -563,7 +563,7 @@ async def test_resume_lt_12h_no_repeats(tmp_path):
     (run,) = runs(t)
     assert run.status == "done" and run.finds_count == 2 and run.loads > 5
     assert search_calls(t, "c1") == 2  # две страницы выдачи в первом заходе, при продолжении не открывалась
-    assert sum(1 for x in t.notifier.sent if x.startswith("<b>⏳")) == 2  # на продолжении новое сообщение о прогрессе
+    assert sum(1 for x in t.notifier.sent if x.startswith("<b>🔎")) == 2  # на продолжении новое сообщение о прогрессе
 
 
 async def test_new_run_gt_12h(tmp_path):
@@ -579,10 +579,10 @@ async def test_progress_once_per_minute(tmp_path):
     hook(t, url_of("Ac2"), lambda: t.now.__setitem__(0, NOW + timedelta(seconds=61)))
     t.crawler.start()
     await t.crawler._task
-    assert sum(1 for x in t.notifier.sent if x.startswith("<b>⏳")) == 1
-    assert len(t.notifier.edits) == 2 and t.notifier.edits[0][1].startswith("<b>⏳")  # до c2 тихо, после c2 одна правка
+    assert sum(1 for x in t.notifier.sent if x.startswith("<b>🔎")) == 1
+    assert len(t.notifier.edits) == 2 and t.notifier.edits[0][1].startswith("<b>🔎")  # до c2 тихо, после c2 одна правка
     last = t.notifier.edits[-1][1]
-    assert last.startswith("<b>✅ Проверка завершена</b>") and "⏱ 01:01 прошло" in last
+    assert last.startswith("<b>✅ Проверка завершена</b>") and "Прошло: <code>01:01</code>" in last
 
 
 async def test_hot_sent_immediately_non_hot_only_in_summary(tmp_path):
@@ -911,7 +911,7 @@ async def test_progress_ticker_edits_during_long_subcategory_and_skips_unchanged
     t.crawler.provider_factory = lambda: slow
     t.crawler.start()
     await t.crawler._task
-    live = [x for _, x in t.notifier.edits if x.startswith("<b>⏳")]
+    live = [x for _, x in t.notifier.edits if x.startswith("<b>🔎")]
     assert len(live) >= 3 and len(set(live)) == len(live)  # правки по таймеру, одинаковый текст не шлётся
     assert t.crawler._ticker is None
 

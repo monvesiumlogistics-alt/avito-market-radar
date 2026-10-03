@@ -565,7 +565,7 @@ FINAL_HEADERS = {
     "failed": "⚠️ Проверка упала",
     "interrupted": "⏹ Прервано",
 }
-BAR_WIDTH = 20
+BAR_WIDTH = 22
 ETA_MIN_LOADS = 10  # раньше оценка скорости слишком шумная
 
 
@@ -576,7 +576,7 @@ def _mmss(seconds: float) -> str:
 
 def progress_bar(loads: int, budget: int) -> str:
     done = min(max(round(BAR_WIDTH * loads / budget), 0), BAR_WIDTH) if budget else 0
-    return "[" + "■" * done + "□" * (BAR_WIDTH - done) + "]"
+    return "▰" * done + "▱" * (BAR_WIDTH - done)
 
 
 def current_label(section: str, sub: str) -> str:
@@ -592,20 +592,32 @@ def format_progress(
     hot: int = 0,
     current: str | None = None,
     status: str | None = None,
+    total: int | None = None,
+    errors: int = 0,
 ) -> str:
-    """Одно живое сообщение (вариант «блоки в рамке»): заголовок, полоса, детали в цитате.
-    status=None — идёт (с ETA и текущей категорией); иначе итоговый заголовок без ETA и «сейчас»."""
-    head = "⏳ Проверка рынка" if status is None else FINAL_HEADERS.get(status, "⏹ Остановлено")
-    pct = min(round(100 * loads / budget), 100) if budget else 0
-    timing = f"⏱ {_mmss(elapsed)} прошло"
+    """Одно живое сообщение: заголовок, что обходится, полоса с %, статистика построчно.
+    status=None — идёт (с «Осталось» и текущей категорией); иначе итоговый заголовок."""
+    head = "🔎 Проверка рынка" if status is None else FINAL_HEADERS.get(status, "⏹ Остановлено")
+    pct = min(100 * loads / budget, 100) if budget else 0
+    left = "—"
     if status is None and loads >= ETA_MIN_LOADS and budget > loads:
-        timing += f" · ~{max(round(elapsed / loads * (budget - loads) / 60), 1)} мин осталось"
-    details = [timing, f"📄 {loads} из {budget} страниц"]
+        left = f"~{max(round(elapsed / loads * (budget - loads) / 60), 1)} мин"
+    speed = f"{loads / (elapsed / 60):.1f} стр/мин" if elapsed >= 30 and loads else "—"
+    lines = [f"<b>{head}</b>", ""]
     if status is None and current:
-        details.append(current)
-    details.append(f"🎯 {finds} находок · 🔥 {hot} · 📂 {subcats} подкатегорий")
-    body = "\n".join(details)
-    return f"<b>{head}</b>\n<code>{progress_bar(loads, budget)} {pct}%</code>\n<blockquote>{body}</blockquote>"
+        lines.append(f"📂 {current}")
+    lines += [
+        f"<code>{progress_bar(loads, budget)}  {pct:.1f}%</code>",
+        "",
+        "<b>ℹ️ Обход…</b>" if status is None else "<b>ℹ️ Готово</b>",
+        f"⏩ Страниц: <code>{loads} / {budget}</code>",
+        f"✅ Найдено: <code>{finds}</code>" + (f" · 🔥 <code>{hot}</code>" if hot else ""),
+        f"❗️ Ошибок: <code>{errors}</code>",
+        f"⏲ Скорость: <code>{speed}</code>",
+        f"📖 Прошло: <code>{_mmss(elapsed)}</code> · Осталось: <code>{left}</code>",
+        f"▶ Подкатегорий: <code>{subcats}" + (f" / {total}" if total else "") + "</code>",
+    ]
+    return "\n".join(lines)
 
 
 def _cut_at(line: str, limit: int) -> int:

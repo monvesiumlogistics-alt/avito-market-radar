@@ -251,27 +251,32 @@ def test_split_message_never_cuts_a_card():
 def test_format_progress_bar_eta_and_states():
     from app.services.market_logic import progress_bar
 
-    assert progress_bar(228, 600) == "[" + "■" * 8 + "□" * 12 + "]"
-    assert progress_bar(0, 600) == "[" + "□" * 20 + "]" and progress_bar(700, 600) == "[" + "■" * 20 + "]"
-    assert progress_bar(1, 0) == "[" + "□" * 20 + "]"
-    text = format_progress(754, 228, 600, 31, 9, 4, "🚲 Велосипеды — Электровелосипеды")
-    assert text.split("\n") == [
-        "<b>⏳ Проверка рынка</b>",
-        "<code>[■■■■■■■■□□□□□□□□□□□□] 38%</code>",
-        "<blockquote>⏱ 12:34 прошло · ~21 мин осталось",  # 754 / 228 * 372 = 1230 c = 20.5 мин
-        "📄 228 из 600 страниц",
-        "🚲 Велосипеды — Электровелосипеды",
-        "🎯 9 находок · 🔥 4 · 📂 31 подкатегорий</blockquote>",
+    assert progress_bar(300, 600) == "▰" * 11 + "▱" * 11
+    assert progress_bar(0, 600) == "▱" * 22 and progress_bar(700, 600) == "▰" * 22 and progress_bar(1, 0) == "▱" * 22
+    text = format_progress(754, 228, 600, 31, 9, 4, "🚲 Велосипеды — Электровелосипеды", total=48, errors=2)
+    assert text.split(chr(10)) == [
+        "<b>🔎 Проверка рынка</b>",
+        "",
+        "📂 🚲 Велосипеды — Электровелосипеды",
+        f"<code>{progress_bar(228, 600)}  38.0%</code>",
+        "",
+        "<b>ℹ️ Обход…</b>",
+        "⏩ Страниц: <code>228 / 600</code>",
+        "✅ Найдено: <code>9</code> · 🔥 <code>4</code>",
+        "❗️ Ошибок: <code>2</code>",
+        "⏲ Скорость: <code>18.1 стр/мин</code>",
+        "📖 Прошло: <code>12:34</code> · Осталось: <code>~21 мин</code>",  # 754 / 228 * 372 = 20.5 мин
+        "▶ Подкатегорий: <code>31 / 48</code>",
     ]
-    assert "осталось" not in format_progress(60, 9, 600, 1, 0)  # до 10 загрузок оценки нет
-    assert "осталось" not in format_progress(60, 600, 600, 1, 0)
-    assert "Велосипеды" not in format_progress(60, 5, 600, 1, 0)  # нет текущей категории — нет строки
-    assert "⏱ 62:05 прошло" in format_progress(3725, 10, 600, 1, 0)
+    assert "Осталось: <code>—" in format_progress(60, 9, 600, 1, 0)  # до 10 загрузок оценки нет
+    assert "Скорость: <code>—" in format_progress(10, 9, 600, 1, 0)  # слишком рано для скорости
+    assert "📂" not in format_progress(60, 5, 600, 1, 0)  # нет текущей категории — нет строки
+    assert "<code>62:05</code>" in format_progress(3725, 10, 600, 1, 0)
     done = format_progress(754, 300, 600, 40, 5, 2, "x", "done")
-    assert done.startswith("<b>✅ Проверка завершена</b>\n")
-    assert "⏱ 12:34 прошло\n" in done and "осталось" not in done and "\nx\n" not in done  # без ETA и «сейчас»
-    assert format_progress(5, 1, 600, 0, 0, status="stopped").startswith("<b>⏹ Остановлено</b>\n")
-    assert format_progress(5, 1, 600, 0, 0, status="blocked").startswith("<b>⚠️ Блок Avito</b>\n")
+    assert done.startswith("<b>✅ Проверка завершена</b>")
+    assert "Осталось: <code>—" in done and "📂" not in done and "ℹ️ Готово" in done
+    assert format_progress(5, 1, 600, 0, 0, status="stopped").startswith("<b>⏹ Остановлено</b>")
+    assert format_progress(5, 1, 600, 0, 0, status="blocked").startswith("<b>⚠️ Блок Avito</b>")
     assert format_progress(5, 1, 600, 0, 0, status="failed").startswith("<b>⚠️ Проверка упала</b>")
 
 
