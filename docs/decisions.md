@@ -91,3 +91,6 @@
 - 👍/👎 buttons: the numbers on the cards follow the displayed (grouped) order; one row per find, still only for portions of <= 8 finds.
 - Removed: `sort_finds` (🔥/new-first order is replaced by vpd order inside groups), its test, and the «уже было» ordering assertion; «уже было dd.mm» now sits on the date line of the card.
 
+## ADR-012: Live progress message (2026-10-04)
+- One message, edited in place: header with the elapsed time since this `/report` press, a 10-char bar by loads/budget, ETA = elapsed / loads x (budget - loads) (shown from 10 loads), «Сейчас» (current section and subcategory, «перепроверка находок», «🧩 жду проверку капчи»), counters with hot finds. A background ticker edits it every `PROGRESS_EDIT_SECONDS` (default 20, 0 = only after each subcategory); an edit is skipped when the text is unchanged. On finish the header is replaced (✅ with time / ⏹ / ⚠️). Pure formatter `format_progress`.
+

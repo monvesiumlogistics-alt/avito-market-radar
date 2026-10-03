@@ -35,6 +35,7 @@ from app.services.market_logic import (
     age_days,
     calc_vpd,
     crawl_order,
+    current_label,
     date_checked,
     find_age,
     format_gone,
@@ -56,7 +57,6 @@ from app.services.market_logic import (
 log = logging.getLogger(__name__)
 
 RESUMABLE = ("running", "stopped", "blocked", "interrupted", "failed")  # budget/done: следующий прогон новый
-PROGRESS_EVERY = timedelta(minutes=1)
 FEEDBACK_MAX_FINDS = 8  # кнопки 👍/👎 только у порции до 8 находок (лимит клавиатуры Telegram)
 MAX_ERROR_STREAK = 3
 RECHECK_MIN_AGE = timedelta(days=2)  # перепроверяем находки возрастом 2-14 дней
@@ -134,6 +134,10 @@ class MarketCrawler:
         self._progress_at: datetime | None = None
         self._progress_id: int | None = None
         self._progress_tried = False
+        self._progress_last = ""
+        self._started: datetime | None = None
+        self._current: str | None = None  # что обходится сейчас (строка «Сейчас» в сообщении о прогрессе)
+        self._ticker: asyncio.Task | None = None
         self.gone_ids: list[int] = []  # находки, исчезнувшие при перепроверке в этом прогоне
 
     # --- жизненный цикл ---
@@ -168,6 +172,7 @@ class MarketCrawler:
         self.stop_requested, self.errors = False, []
         self._progress_at = self._progress_id = None
         self.gone_ids = []
+        self._started, self._current, self._progress_last = now, None, ""
         self._progress_tried = False  # на продолжении новое сообщение о прогрессе (m6)
         self._task = asyncio.create_task(self._run())
         return reply
@@ -198,6 +203,8 @@ class MarketCrawler:
                 self.provider = await self._open_provider()
                 self.loads += 1  # первая загрузка включает warm-up: два goto (N7)
                 await self._send_progress(force=True)
+                if self.settings.progress_edit_seconds > 0:
+                    self._ticker = asyncio.create_task(self._tick())
                 await self._recheck_finds()
                 await self.discover_sections()
                 await self._crawl_all()
@@ -214,6 +221,9 @@ class MarketCrawler:
                 log.exception("[MARKET] прогон упал")
                 status = "failed"
         finally:
+            if self._ticker:
+                self._ticker.cancel()
+                self._ticker = None
             if self.provider is not None:
                 with contextlib.suppress(Exception):
                     await self.provider.__aexit__(None, None, None)
@@ -225,6 +235,8 @@ class MarketCrawler:
                 self._finish(status)
             except Exception:  # БД занята: итог всё равно отправим, статус поправит mark_interrupted при старте
                 log.exception("[MARKET] статус прогона не записан")
+            with contextlib.suppress(Exception):
+                await self._send_progress(force=True, status=status)  # итоговый заголовок вместо ⏳
         try:
             await self._summary(status)
         except Exception:
@@ -275,26 +287,37 @@ class MarketCrawler:
 
     # --- сообщения ---
 
-    def _progress_text(self) -> str:
+    def _progress_text(self, status: str | None = None) -> str:
         with self.session_factory() as db:
-            cats = self._categories(db)
+            subcats = len([c for c in self._categories(db) if c.last_run_id == self.run_id])
             finds = db.get(CrawlRun, self.run_id).finds_count
-        sections: dict[str, list[bool]] = {}
-        for c in cats:
-            sections.setdefault(c.section, []).append(c.last_run_id == self.run_id)
-        done = sum(all(v) for v in sections.values())
-        subcats = sum(c.last_run_id == self.run_id for c in cats)
-        return format_progress(done, len(sections), subcats, self.loads, self.settings.report_budget, finds)
+            hot = db.scalar(
+                select(func.count()).select_from(Find).where(Find.run_id == self.run_id, Find.hot.is_(True))
+            )
+        elapsed = (self.clock() - self._started).total_seconds() if self._started else 0
+        return format_progress(
+            elapsed, self.loads, self.settings.report_budget, subcats, finds, hot or 0, self._current, status
+        )
 
-    async def _send_progress(self, force: bool = False) -> None:
-        """Одно сообщение, правится не чаще раза в минуту (AC-4.1)."""
+    async def _tick(self) -> None:
+        """Живой таймер: правит сообщение каждые PROGRESS_EDIT_SECONDS, даже посреди долгой подкатегории."""
+        while True:
+            await asyncio.sleep(self.settings.progress_edit_seconds)
+            with contextlib.suppress(Exception):
+                await self._send_progress(force=True)
+
+    async def _send_progress(self, force: bool = False, status: str | None = None) -> None:
+        """Одно сообщение, правится не чаще PROGRESS_EDIT_SECONDS (AC-4.1), без правки, если текст не изменился."""
         now = self.clock()
-        if not force and self._progress_at and now - self._progress_at < PROGRESS_EVERY:
+        every = timedelta(seconds=self.settings.progress_edit_seconds)
+        if not force and self._progress_at and now - self._progress_at < every:
             return
-        self._progress_at = now
-        text = self._progress_text()
+        text = self._progress_text(status)
+        if text == self._progress_last:
+            return
+        self._progress_at, self._progress_last = now, text
         if self._progress_id is None:
-            if self._progress_tried:  # первая отправка не удалась: не повторяем каждую минуту
+            if self._progress_tried:  # первая отправка не удалась: не повторяем
                 return
             self._progress_tried = True
             self._progress_id = await self.notifier.send_text(text)
@@ -478,7 +501,14 @@ class MarketCrawler:
         await self.notifier.send_text(
             f"🧩 Avito просит проверку — пройди её в окне браузера бота (жду до {minutes} мин)"
         )
-        passed = await self.provider.wait_unblocked(url, minutes * 60, self.captcha_poll, lambda: self.stop_requested)
+        before, self._current = self._current, "🧩 жду проверку капчи"
+        await self._send_progress(force=True)
+        try:
+            passed = await self.provider.wait_unblocked(
+                url, minutes * 60, self.captcha_poll, lambda: self.stop_requested
+            )
+        finally:
+            self._current = before
         if self.stop_requested:
             raise StopRequested
         if passed:
@@ -506,6 +536,8 @@ class MarketCrawler:
             todo: dict[str, tuple[int, str]] = {}
             for f in rows:  # одно объявление могло быть найдено в нескольких прогонах: открываем один раз
                 todo.setdefault(f.external_id, (f.id, f.url))
+        if todo:
+            self._current = "перепроверка находок"
         for ext_id, (_, url) in list(todo.items())[:limit]:
             if self.loads >= self.settings.report_budget:
                 break  # перепроверка не съедает бюджет обхода целиком: на обход остаётся только то, что осталось
@@ -577,6 +609,7 @@ class MarketCrawler:
         with self.session_factory() as db:
             cat = db.get(Category, cat_id)
             url, name = cat.url, cat.name
+            self._current = current_label(cat.section, name)
         try:
             cards, covered = await self._collect(url, name)
             finds, best_vpd = await self._evaluate(cat_id, cards)

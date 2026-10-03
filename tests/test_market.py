@@ -577,7 +577,8 @@ async def test_progress_once_per_minute(tmp_path):
     t.crawler.start()
     await t.crawler._task
     assert sum(1 for x in t.notifier.sent if x.startswith("⏳")) == 1
-    assert len(t.notifier.edits) == 1 and t.notifier.edits[0][1].startswith("⏳")  # до c2 тихо, после c2 одна правка
+    assert len(t.notifier.edits) == 2 and t.notifier.edits[0][1].startswith("⏳")  # до c2 тихо, после c2 одна правка
+    assert t.notifier.edits[-1][1].startswith("✅ Проверка завершена — 01:01")  # и итоговый заголовок
 
 
 async def test_portion_after_section_and_final_sorted(tmp_path):
@@ -826,3 +827,69 @@ async def test_crawler_crash_monitor_unaffected(tmp_path):
     assert runs(t)[0].status == "failed" and not gate.locked
     async with gate.hold():  # мониторинг получает браузер как обычно
         pass
+
+
+async def test_progress_final_headers_and_current_states(tmp_path):
+    t = life(tmp_path, {"A": [900, 900]})
+    seen: list[str] = []
+    hook(t, url_of("Ac2"), lambda: seen.append(t.crawler._progress_text()))
+    t.crawler.start()
+    await t.crawler._task
+    assert "Сейчас: 📦 A — A 2" in seen[0]  # во время обхода подкатегории
+    assert t.notifier.edits[-1][1].split("\n")[0].startswith("✅ Проверка завершена — ")
+    t = await _stopped_run(tmp_path / "s")
+    assert t.notifier.edits[-1][1].startswith("⏹ Остановлено")
+    t = life(tmp_path / "b", {"A": [900, 900]})
+    break_page(t, "Ac2")
+    t.crawler.start()
+    await t.crawler._task
+    assert t.notifier.edits[-1][1].startswith("⚠️ Блок Avito")
+
+
+async def test_progress_captcha_state_and_recheck_state(tmp_path):
+    t = life(tmp_path, {"A": [900]})
+    states = []
+
+    async def wait(url, timeout_s, poll_s=5, cancel=None):
+        states.append(t.crawler._progress_text())
+        return True
+
+    t.provider.wait_unblocked = wait
+    break_page(t, "Ac1", times=1)
+    t.crawler.start()
+    await t.crawler._task
+    assert "Сейчас: 🧩 жду проверку капчи" in states[0] and "Сейчас: 🧩" not in t.crawler._progress_text()
+    assert any("🧩 жду проверку капчи" in text for _, text in t.notifier.edits)  # сообщение правится сразу
+    t = life(tmp_path / "r", {"A": [900]})
+    with t.sf() as db:
+        db.add(
+            Find(run_id=1, category_id=1, group_key="g", title="Old", price_min=1, price_max=1, vpd=1, age_days=1,
+                 date_checked=True, copies=1, url=card_url("o"), external_id="o", hot=False,
+                 created_at=NOW - timedelta(days=3))
+        )  # fmt: skip
+        db.commit()
+    t.pages[card_url("o")] = lambda: seen_text.append(t.crawler._progress_text()) or item_html(5)
+    seen_text: list[str] = []
+    t.crawler.start()
+    await t.crawler._task
+    assert "Сейчас: перепроверка находок" in seen_text[0]
+
+
+async def test_progress_ticker_edits_during_long_subcategory_and_skips_unchanged(tmp_path):
+    t = life(tmp_path, {"A": [900]})
+    t.crawler.settings.progress_edit_seconds = 0.02
+
+    class Slow(FakeProvider):
+        async def fetch(self, url, ready_selector=None):
+            t.now[0] += timedelta(seconds=5)  # часы бегут, пока «грузится» страница
+            await asyncio.sleep(0.1)
+            return await super().fetch(url, ready_selector)
+
+    slow = Slow(t.pages)
+    slow.events = t.provider.events
+    t.crawler.provider_factory = lambda: slow
+    t.crawler.start()
+    await t.crawler._task
+    live = [x for _, x in t.notifier.edits if x.startswith("⏳")]
+    assert len(live) >= 3 and len(set(live)) == len(live)  # правки по таймеру, одинаковый текст не шлётся
+    assert t.crawler._ticker is None

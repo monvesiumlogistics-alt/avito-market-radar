@@ -482,11 +482,59 @@ def render_groups(groups: Sequence[Sequence[Entry]], numbered: bool = False) -> 
     return blocks
 
 
-def format_progress(sections_done: int, sections_total: int, subcats: int, loads: int, budget: int, finds: int) -> str:
-    return (
-        f"⏳ Проверка рынка: разделов {sections_done}/{sections_total} · подкатегорий {subcats}"
-        f" · загрузок {loads}/{budget} · находок {finds}"
-    )
+FINAL_HEADERS = {
+    "done": "✅ Проверка завершена",
+    "budget": "✅ Проверка завершена (бюджет загрузок)",
+    "stopped": "⏹ Остановлено",
+    "blocked": "⚠️ Блок Avito",
+    "failed": "⚠️ Проверка упала",
+    "interrupted": "⏹ Прервано",
+}
+BAR_WIDTH = 10
+ETA_MIN_LOADS = 10  # раньше оценка скорости слишком шумная
+
+
+def _mmss(seconds: float) -> str:
+    total = max(int(seconds), 0)
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def progress_bar(loads: int, budget: int) -> str:
+    done = min(max(round(BAR_WIDTH * loads / budget), 0), BAR_WIDTH) if budget else 0
+    return "▓" * done + "░" * (BAR_WIDTH - done)
+
+
+def current_label(section: str, sub: str) -> str:
+    return f"{section_emoji(section)} {html.escape(section_name(section))} — {html.escape(sub)}"
+
+
+def format_progress(
+    elapsed: float,
+    loads: int,
+    budget: int,
+    subcats: int,
+    finds: int,
+    hot: int = 0,
+    current: str | None = None,
+    status: str | None = None,
+) -> str:
+    """Одно живое сообщение: время, полоса, ETA (от скорости загрузок), что обходится сейчас, счётчики.
+    status=None — идёт; иначе итоговый заголовок (+ время у «завершена»), без «Сейчас» и ETA."""
+    if status is None:
+        head = f"⏳ Проверка рынка — {_mmss(elapsed)}"
+    else:
+        head = FINAL_HEADERS.get(status, "⏹ Остановлено")
+        if status in ("done", "budget"):
+            head += f" — {_mmss(elapsed)}"
+    pct = min(round(100 * loads / budget), 100) if budget else 0
+    bar = f"{progress_bar(loads, budget)} {pct}% · загрузок {loads}/{budget}"
+    if status is None and loads >= ETA_MIN_LOADS and budget > loads:
+        bar += f" · осталось ~{max(round(elapsed / loads * (budget - loads) / 60), 1)} мин"
+    lines = [head, bar]
+    if status is None and current:
+        lines.append(f"Сейчас: {current}")
+    lines.append(f"Подкатегорий {subcats} · находок {finds} (🔥 {hot})")
+    return "\n".join(lines)
 
 
 def format_summary(

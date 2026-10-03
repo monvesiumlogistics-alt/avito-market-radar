@@ -189,10 +189,7 @@ def test_group_entries_aimiko_and_stroller():
     blocks = render_groups(groups)
     assert len(blocks) == 5
     assert blocks[0].startswith("<b>🧸 ТОВАРЫ ДЛЯ ДЕТЕЙ И ИГРУШКИ — Коляски</b>\n")
-    assert (
-        blocks[1].startswith("<b>🚲 ВЕЛОСИПЕДЫ — Электровелосипеды</b>\n🔥 <a ")
-        and "Aimiko U2 Pro 63V" in blocks[1]
-    )
+    assert blocks[1].startswith("<b>🚲 ВЕЛОСИПЕДЫ — Электровелосипеды</b>\n🔥 <a ") and "Aimiko U2 Pro 63V" in blocks[1]
     assert all("<b>" not in b for b in blocks[2:])  # заголовок только у первой карточки группы
     numbered = render_groups(groups, numbered=True)
     assert numbered[0].split("\n")[1].startswith("1. ") and numbered[4].startswith("5. ")
@@ -215,10 +212,30 @@ def test_split_message_never_cuts_a_card():
     assert out[0] == "head" and all(len(c) <= 500 for c in out)
 
 
-def test_format_progress():
-    assert format_progress(7, 25, 23, 210, 600, 12) == (
-        "⏳ Проверка рынка: разделов 7/25 · подкатегорий 23 · загрузок 210/600 · находок 12"
+def test_format_progress_bar_eta_and_states():
+    from app.services.market_logic import progress_bar
+
+    assert (
+        progress_bar(228, 600) == "▓▓▓▓░░░░░░"
+        and progress_bar(0, 600) == "░" * 10
+        and progress_bar(700, 600) == "▓" * 10
     )
+    assert progress_bar(1, 0) == "░" * 10
+    text = format_progress(754, 228, 600, 31, 9, 4, "🚲 Велосипеды — Электровелосипеды")
+    assert text.split("\n") == [
+        "⏳ Проверка рынка — 12:34",
+        "▓▓▓▓░░░░░░ 38% · загрузок 228/600 · осталось ~21 мин",  # 754 / 228 * 372 = 1230 c = 20.5 мин
+        "Сейчас: 🚲 Велосипеды — Электровелосипеды",
+        "Подкатегорий 31 · находок 9 (🔥 4)",
+    ]
+    assert "осталось" not in format_progress(60, 9, 600, 1, 0)  # до 10 загрузок оценки нет
+    assert "осталось" not in format_progress(60, 600, 600, 1, 0) and "Сейчас" not in format_progress(60, 5, 600, 1, 0)
+    assert format_progress(3725, 10, 600, 1, 0).startswith("⏳ Проверка рынка — 62:05")
+    done = format_progress(754, 300, 600, 40, 5, 2, "x", "done").split("\n")
+    assert done[0] == "✅ Проверка завершена — 12:34" and "осталось" not in done[1] and len(done) == 3
+    assert format_progress(5, 1, 600, 0, 0, status="stopped").startswith("⏹ Остановлено\n")
+    assert format_progress(5, 1, 600, 0, 0, status="blocked").startswith("⚠️ Блок Avito\n")
+    assert format_progress(5, 1, 600, 0, 0, status="failed").startswith("⚠️ Проверка упала")
 
 
 def test_summary_covered_days_remaining_and_error_cap():
