@@ -18,3 +18,10 @@
 - Status: accepted (user, design soft gate)
 - 600 loads/run, 2–5 s pauses → ~55–65 min per run; NFR-2 target 40–50 min relaxed to ~65 min. Lower block risk preferred over speed.
 - Design decisions kept as recommended: gate handover to D&G monitor between subcategories; seller-profile check verified on live pages in first iteration (disable if card date not changed by raise); pmin in search URL + local price re-check.
+
+## ADR-004: Live verification spike (I1) — BLOCKED, answers pending (2026-10-03)
+- Status: incomplete. `scripts/save_fixtures.py crawl` (provider launch args, headed, persistent profile, no bot running) got HTTP 439 / «Доступ ограничен: проверка безопасности» on the very FIRST load (warm-up `https://www.avito.ru`). Per safety rule: no solving, no retry, no `app.auth`, browser closed. Loads used: 1 of 25.
+- (a) seller profile shows listing dates: NOT VERIFIED. (b) card-page date changes on raise: NOT VERIFIED → `CHECK_SELLER_DATE` stays true. (c) date formats / promo marker / item-date selectors / views regex: NOT VERIFIED (design relies on catalog.js: «№ id · дата · N просмотров (+M сегодня)», promo = «Продвинуто|Забронировано»; selectors vs existing parser: no diff observed).
+- Likely cause: IP/profile flagged by Avito after the earlier monitor runs; the block page appeared on the home page, before any new traffic pattern from this spike. Needs a human decision (wait for cooldown, proxy, or re-auth by the user via `app.auth`).
+- (f) Decision recorded: `crawl_order` is section-grouped as designed in tech-design §6 (plan N5/m5 accepted).
+- Rerun: after the block clears, `PYTHONIOENCODING=utf-8 .venv/Scripts/python -m scripts.save_fixtures crawl <section_slug>` then `sanitize RAW_NAME FIXTURE_NAME` per fixture.
