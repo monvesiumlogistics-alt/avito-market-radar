@@ -3,12 +3,13 @@ from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.db import ListingRow, WatchRule
+from app.services.market import MarketCrawler
 from app.services.notifier import format_price
 from app.services.scanner import Scanner
 
@@ -17,8 +18,20 @@ def _hm(dt: datetime | None) -> str:
     return dt.strftime("%d.%m %H:%M") if dt else "—"
 
 
-def build_router(admin_chat_id: int, scanner: Scanner, session_factory: sessionmaker,
-                 scheduler: AsyncIOScheduler) -> Router:
+REPORT_BUTTON = "🔎 Проверить рынок"
+STOP_BUTTON = "⏹ Стоп"
+KEYBOARD = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text=REPORT_BUTTON), KeyboardButton(text=STOP_BUTTON)]], resize_keyboard=True
+)
+
+
+def build_router(
+    admin_chat_id: int,
+    scanner: Scanner,
+    session_factory: sessionmaker,
+    scheduler: AsyncIOScheduler,
+    crawler: MarketCrawler,
+) -> Router:
     router = Router()
     router.message.filter(F.chat.id == admin_chat_id)  # чужим бот молча не отвечает
 
@@ -27,8 +40,21 @@ def build_router(admin_chat_id: int, scanner: Scanner, session_factory: sessionm
         await msg.answer(
             "<b>AvitoHunter</b>: мониторинг новых объявлений Avito.\n\n"
             "/status: состояние\n/watchlist: правила\n/check: проверить сейчас\n"
-            "/last: последние найденные\n/pause, /resume: пауза мониторинга"
+            "/last: последние найденные\n/pause, /resume: пауза мониторинга\n\n"
+            "<b>Что выложить</b>: проверка рынка, час-полтора\n"
+            "/report: запустить или продолжить, /stop: остановить",
+            reply_markup=KEYBOARD,
         )
+
+    @router.message(Command("report"))
+    @router.message(F.text == REPORT_BUTTON)
+    async def report(msg: Message) -> None:
+        await msg.answer(crawler.start())
+
+    @router.message(Command("stop"))
+    @router.message(F.text == STOP_BUTTON)
+    async def stop(msg: Message) -> None:
+        await msg.answer(crawler.stop())
 
     @router.message(Command("status"))
     async def status(msg: Message) -> None:

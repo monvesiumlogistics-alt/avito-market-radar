@@ -110,7 +110,7 @@ real deps: I3←I1 · I5←I4 · I7←I6 · I9←I2,I3,I4,I7 · I9b←I2,I3,I9 �
 
 ## Iteration 12: Telegram commands + wiring  (M)
 **Modify**: `app/telegram/handlers.py` (`build_router(..., crawler)`, `/report`, `/stop`, ReplyKeyboard in `/start`, buttons via `F.text`), `app/main.py` (one `BrowserGate` shared by Scanner and MarketCrawler; `mark_interrupted` on boot; extract `build_scheduler(scanner)` used by `main()` — N9). **Create** `tests/test_handlers.py` (via `Dispatcher.feed_update` with a fake bot session or thin handlers calling crawler fakes), `tests/test_main.py`.
-**Done**: [ ] replies per §7 table [ ] test_start_buttons [ ] test_foreign_chat_ignored (AC-6.2) [ ] test_scheduler_only_scan (jobs == {"scan"}, AC-1.3) [ ] gate.
+**Done**: [x] replies per §7 table [x] test_start_buttons [x] test_foreign_chat_ignored (AC-6.2) [x] test_scheduler_only_scan (jobs == {"scan"}, AC-1.3) [x] gate.
 **Depends**: 10 · **Risk**: medium (`main.py` startup).
 
 ## Iteration 13: Doc hygiene + live smoke  (S)

@@ -11,6 +11,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import playwright_proxy, settings
 from app.db import init_db, sync_default_rule
 from app.providers.avito_browser import AvitoBrowserProvider
+from app.providers.base import BrowserGate
+from app.services.market import MarketCrawler
 from app.services.notifier import TelegramNotifier
 from app.services.scanner import Scanner
 from app.telegram.handlers import build_router
@@ -20,6 +22,21 @@ def setup_logging(level: str) -> None:
     sys.stdout.reconfigure(encoding="utf-8")  # консоль Windows по умолчанию cp1252
     logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s", stream=sys.stdout)
     logging.getLogger("aiogram.event").setLevel(logging.WARNING)  # не спамить каждым апдейтом
+
+
+def build_scheduler(scanner: Scanner) -> AsyncIOScheduler:
+    """Единственная задача по расписанию — мониторинг; проверка рынка только по кнопке (AC-1.3)."""
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        scanner.run_watch_rules,
+        "interval",
+        minutes=scanner.interval_minutes,
+        id="scan",
+        next_run_time=datetime.now() + timedelta(seconds=10),
+        max_instances=1,
+        coalesce=True,
+    )
+    return scheduler
 
 
 async def main() -> None:
@@ -40,6 +57,7 @@ async def main() -> None:
     )
     notifier = TelegramNotifier(bot, settings.telegram_admin_chat_id)
     proxy = playwright_proxy(settings.avito_proxy)
+    gate = BrowserGate()  # один профиль браузера на мониторинг и проверку рынка
     scanner = Scanner(
         session_factory,
         lambda: AvitoBrowserProvider(settings.avito_profile_path, settings.headless, proxy),
@@ -47,22 +65,23 @@ async def main() -> None:
         interval_minutes=settings.check_interval_minutes,
         initial_scan_notify=settings.initial_scan_notify,
         max_pages=settings.max_pages,
+        gate=gate,
     )
+    delay = (settings.page_delay_min, settings.page_delay_max)
+    crawler = MarketCrawler(
+        session_factory,
+        lambda: AvitoBrowserProvider(settings.avito_profile_path, settings.headless, proxy, delay=delay),
+        notifier,
+        settings,
+        gate=gate,
+    )
+    crawler.mark_interrupted()  # прогон, оборванный перезапуском бота, можно продолжить по /report
 
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(
-        scanner.run_watch_rules,
-        "interval",
-        minutes=settings.check_interval_minutes,
-        id="scan",
-        next_run_time=datetime.now() + timedelta(seconds=10),
-        max_instances=1,
-        coalesce=True,
-    )
+    scheduler = build_scheduler(scanner)
     scheduler.start()
 
     dp = Dispatcher()
-    dp.include_router(build_router(settings.telegram_admin_chat_id, scanner, session_factory, scheduler))
+    dp.include_router(build_router(settings.telegram_admin_chat_id, scanner, session_factory, scheduler, crawler))
     log.info("AvitoHunter запущен, интервал %d мин", settings.check_interval_minutes)
     await notifier.send_text(f"AvitoHunter запущен ✅ Проверка каждые {settings.check_interval_minutes} мин.")
     try:
