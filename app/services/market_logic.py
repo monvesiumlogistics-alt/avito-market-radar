@@ -486,6 +486,9 @@ def market_stats(cards: Sequence, opened: Sequence) -> dict:
 def market_line(c, premium: bool = False) -> str:
     """Строка среза рынка: «Аккордеоны — 250 свежих за 1.7 дн · ~45 000 ₽ · 👁 8–41/д (медиана 15) · лучшее»."""
     name = html.escape(c.name)
+    if getattr(c, "url", None):  # имя — ссылка на выдачу по дате, чтобы самому глянуть рынок
+        sep = "&" if "?" in c.url else "?"
+        name = f'<a href="{html.escape(c.url + sep + "s=104")}">{name}</a>'
     if not c.last_fresh_count:
         return f"{name} — пусто"
     days = f"{round(c.last_days_covered or 0, 1):g}"

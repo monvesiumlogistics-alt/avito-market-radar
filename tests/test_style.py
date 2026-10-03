@@ -1,5 +1,6 @@
 """ADR-014: срез рынка по подкатегориям, дедупликация, текст покрытия, единый стиль и премиум-иконки."""
 
+import re
 from datetime import timedelta
 from types import SimpleNamespace as NS
 
@@ -105,13 +106,12 @@ async def test_summary_lists_every_crawled_subcategory_with_empty_ones(tmp_path)
     await t.crawler._task
     text = summary_text(t)
     assert "<b>📈 Рынок по подкатегориям — 3</b>" in text
-    lines = {ln.split(" — ")[0].replace("<blockquote expandable>", ""): ln for ln in text.split("\n") if " — " in ln}
-    assert lines["A 2"].endswith("A 2 — пусто") or "пусто" in lines["A 2"]
-    assert (
-        "<code>1</code> свежих" in lines["A 1"] and "👁 <code>300</code>/д" in lines["A 1"] and "лучшее" in lines["A 1"]
-    )
-    assert text.index("A 1 — ") < text.index("A 2 — ")  # по max vpd; пустая подкатегория в конце блока
-    assert "пусто" in text.split("A 2 — ")[1].split("\n")[0]
+    plain = re.sub(r"<[^>]+>", "", text)  # имя подкатегории — ссылка на выдачу по дате
+    lines = {ln.split(" — ")[0]: ln for ln in plain.split("\n") if " — " in ln}
+    assert "пусто" in lines["A 2"]
+    assert "1 свежих" in lines["A 1"] and "👁 300/д" in lines["A 1"] and "лучшее" in lines["A 1"]
+    assert plain.index("A 1 — ") < plain.index("A 2 — ")  # по max vpd; пустая подкатегория в конце блока
+    assert 's=104">A 1</a>' in text  # имя кликабельно
 
 
 # --- дедупликация ---
