@@ -88,7 +88,8 @@ class AvitoBrowserProvider(AvitoProvider):
             await tab.close()
 
         if status_blocked(status) or is_blocked(page.html, page.title):
-            raise ProviderBlocked(page.title or f"Avito: доступ ограничен (HTTP {status})")
+            self._dump(page.html, "blocked")
+            raise ProviderBlocked(f"{page.title or 'Avito: доступ ограничен'} (HTTP {status}, {page.final_url})")
         return page
 
     async def search(self, search: SearchUrl, page: int = 1) -> list[Listing]:
@@ -98,8 +99,8 @@ class AvitoBrowserProvider(AvitoProvider):
             self._dump(fetched.html)
         return listings
 
-    def _dump(self, html: str) -> None:
+    def _dump(self, html: str, kind: str = "empty") -> None:
         self.debug_dir.mkdir(parents=True, exist_ok=True)
-        path = self.debug_dir / f"empty_{datetime.now():%Y%m%d_%H%M%S}.html"
+        path = self.debug_dir / f"{kind}_{datetime.now():%Y%m%d_%H%M%S}.html"
         path.write_text(html, encoding="utf-8")
-        log.warning("[FETCH] 0 карточек; HTML сохранён в %s (проверь SELECTORS)", path)
+        log.warning("[FETCH] %s; HTML сохранён в %s", kind, path)
