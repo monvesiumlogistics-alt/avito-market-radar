@@ -51,6 +51,8 @@ class AvitoBrowserProvider(AvitoProvider):
                 self.profile_path,
                 headless=self.headless,
                 proxy=self.proxy,
+                # без своего прокси — напрямую, мимо системного прокси Windows (VPN-клиент): Avito видит домашний IP
+                args=[] if self.proxy else ["--no-proxy-server"],
                 locale="ru-RU",
                 timezone_id="Europe/Moscow",
                 viewport={"width": 1366, "height": 900},
