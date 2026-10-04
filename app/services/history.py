@@ -11,9 +11,11 @@ from urllib.parse import urlsplit
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import Ad, AdEvent, AdQuerySighting, CardObs
+from app.db import Ad, AdEvent, AdQuerySighting, CardObs, Category
 from app.models import Listing
 from app.services.market_logic import model_key
+from app.services.product_store import assign_product
+from app.services.products import domain_of
 
 POSTED_RANK = {None: 0, "search": 1, "card": 2, "seller": 3}  # дата из профиля точнее карточки, карточка — выдачи
 
@@ -39,6 +41,7 @@ def record_search(
     have = {a.id: a for a in db.scalars(select(Ad).where(Ad.id.in_([c.external_id for c in cards])))}
     new = known = 0
     sightings: dict[str, AdQuerySighting] = {}
+    domain = domain_of(db.get(Category, category_id).url) if category_id else "generic"  # для разбора модели
     for c in cards:
         is_promo = c.external_id in promo
         ad = have.get(c.external_id)
@@ -52,6 +55,7 @@ def record_search(
             )  # fmt: skip
             db.add(ad)
             have[ad.id] = ad
+            assign_product(db, ad, domain, now)  # товар — сразу, без отдельного прохода (ADR-022)
             new += not is_promo
             if query:
                 _sight(db, sightings, ad.id, category_id, now)
@@ -72,6 +76,7 @@ def record_search(
         if c.title[:500] != ad.title:
             _event(db, ad.id, now, "title", ad.title, c.title[:500])
             ad.title, ad.model_key = c.title[:500], model_key(c.title)
+            assign_product(db, ad, domain, now)
         if ad.status != "live":  # снова в выдаче: живое
             _event(db, ad.id, now, "status", ad.status, "live")
             ad.status, ad.status_at = "live", now

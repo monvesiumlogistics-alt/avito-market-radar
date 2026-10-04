@@ -156,6 +156,43 @@ class Ad(Base):
     promoted_seen: Mapped[int] = mapped_column(default=0)
     status: Mapped[str] = mapped_column(String(16), default="live")  # live | gone (маркеры снятия: ADR-010)
     status_at: Mapped[datetime | None]
+    # товар (ADR-022): текущее определение; история смен — product_assignments. model_key выше — legacy/отладка
+    product_id: Mapped[int | None] = mapped_column(index=True)  # только HIGH/MEDIUM
+    identity_conf: Mapped[str | None] = mapped_column(String(8))  # HIGH | MEDIUM | LOW | UNKNOWN
+    identity_brand: Mapped[str | None] = mapped_column(String(100))  # бренд и для LOW (диагностика)
+    identity_variant: Mapped[str | None] = mapped_column(String(200))  # память, батарея, цвет… — не часть товара
+    extractor_version: Mapped[int | None]
+
+
+class Product(Base):
+    """Канонический товар (ADR-022): несколько объявлений (разные external_id) одной модели."""
+
+    __tablename__ = "products"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    canonical_key: Mapped[str] = mapped_column(String(300), unique=True)  # «pioneer|ddj-flx4» — внутренний
+    brand: Mapped[str] = mapped_column(String(100))
+    model: Mapped[str] = mapped_column(String(200))
+    display_name: Mapped[str] = mapped_column(String(300))  # «Pioneer DDJ-FLX4» — пользователю
+    confidence: Mapped[str] = mapped_column(String(8))  # лучшая среди объявлений
+    first_seen_at: Mapped[datetime]
+    last_seen_at: Mapped[datetime]
+    extractor_version: Mapped[int]
+    created_from: Mapped[str | None] = mapped_column(String(500))  # заголовок, по которому товар создан
+
+
+class ProductAssignment(Base):
+    """Журнал смен товара у объявления (новый экстрактор / пересборка) — история не теряется."""
+
+    __tablename__ = "product_assignments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ad_id: Mapped[str] = mapped_column(String(64), index=True)
+    product_id: Mapped[int | None]  # None — объявление больше не относится ни к какому товару
+    confidence: Mapped[str] = mapped_column(String(8))
+    method: Mapped[str] = mapped_column(String(16))  # extractor
+    extractor_version: Mapped[int]
+    assigned_at: Mapped[datetime]
 
 
 class AdQuerySighting(Base):
@@ -246,6 +283,11 @@ _ADDED_COLUMNS = (  # (таблица, колонка, тип) — конста�
     ("categories", "scope_status", "VARCHAR(16)"),
     ("categories", "flags", "VARCHAR(100)"),
     ("categories", "duplicate_of", "VARCHAR(300)"),
+    ("ads", "product_id", "INTEGER"),
+    ("ads", "identity_conf", "VARCHAR(8)"),
+    ("ads", "identity_brand", "VARCHAR(100)"),
+    ("ads", "identity_variant", "VARCHAR(200)"),
+    ("ads", "extractor_version", "INTEGER"),
 )
 
 

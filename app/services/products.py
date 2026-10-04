@@ -382,7 +382,7 @@ def identify(title: str, domain: str = "generic") -> ProductIdentity:
     evidence = [f"бренд: {brand.name}"]
     fams = _families(brand)
     model: list[str] = []
-    complete = has_code = has_family = False
+    complete = has_code = has_family = mod_in_family = False
     j = b_end
     alias = tuple(tokens[b_start:b_end])
     implied = brand.implied.get(" ".join(alias))
@@ -412,12 +412,15 @@ def identify(title: str, domain: str = "generic") -> ProductIdentity:
             complete = complete or fam[1]
             has_family = True
             has_code = has_code or any(_code(t) for t in fam[0])  # серия с цифрой (Teyes CC3) — уже код
+            mod_in_family = True  # «Ace Pro» — Pro часть серии, код после неё (Ace Pro 2) — модель
             evidence.append(f"серия: {' '.join(fam[0])}")
             j += len(fam[0])
             continue
         if _code(tok):
             if domain == "laptop" and MACHINE_TYPE_RE.match(tok):
                 break
+            if model and model[-1] in MODS and not mod_in_family:
+                break  # «Mini 4 Pro RC2», «Kirin V3 Pro A7»: код после Pro — комплект/мусор, не модель
             if tok.isdigit() and model and model[-1].isdigit():
                 break  # «Ace Pro 2 2 батареи»: два числа подряд — второе не модель
             if tok.isdigit() and complete and domain == "fashion":
@@ -427,12 +430,14 @@ def identify(title: str, domain: str = "generic") -> ProductIdentity:
             j += 1
             continue
         nxt = tokens[j + 1] if j + 1 < len(tokens) else ""
-        if model and re.fullmatch(r"[a-z]{2,3}", tok) and _code(nxt) and not _is_variant(nxt, domain):
+        short = tok not in MODS and re.fullmatch(r"[a-z]{2,3}", tok)
+        if model and short and _code(nxt) and not _is_variant(nxt, domain):
             model.append(tok)
             j += 1
             continue
         if model and (tok in ROMAN or tok in MODS or re.fullmatch(r"mk\w+", tok)):
             model.append(tok)
+            mod_in_family = False
             has_code = has_code or tok in ROMAN or tok.startswith("mk")  # GR III, MK7 — поколение
             j += 1
             continue
