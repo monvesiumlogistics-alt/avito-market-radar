@@ -65,9 +65,9 @@ BRANDS: tuple[Brand, ...] = (
     B("Sigma", ("sigma",), ("fp", "art", "contemporary")),
     B("Contax", ("contax",), ("t2", "t3", "g1", "g2")),
     B("Pentax", ("pentax",), ("k", "kp", "mz", "espio", "papilio")),
-    B("GoPro", ("gopro", "go pro", "гопро"), ("hero", "max", "mission")),
+    B("GoPro", ("gopro", "go pro", "гопро"), ("hero", "max", "mission", "=fusion")),
     B("DJI", ("dji",), ("mini", "avata", "air", "mavic", "osmo", "osmo action", "osmo pocket", "osmo mobile",
-                       "action", "pocket", "neo", "flip", "ronin", "rs", "fpv")),  # fmt: skip
+                       "action", "pocket", "neo", "flip", "ronin", "rs", "fpv", "=osmo nano")),  # fmt: skip
     B("Insta360", ("insta360", "insta 360", "инста 360", "инста360"), ("x", "one", "ace", "ace pro", "go")),
     B("Redmagic", ("redmagic", "red magic"), ()),
     # консоли / симрейсинг
@@ -218,7 +218,7 @@ BRANDS: tuple[Brand, ...] = (
 
 # Код модели без названия бренда, однозначно указывающий бренд (DDJ-FLX4 → Pioneer; RTX 4090 → NVIDIA).
 CODE_BRANDS: dict[str, str] = {"ddj": "Pioneer", "xdj": "Pioneer", "cdj": "Pioneer", "djm": "Pioneer",
-                               "redmibook": "Xiaomi"}  # fmt: skip
+                               "redmibook": "Xiaomi", "osmo": "DJI"}  # fmt: skip
 PC_CODE_BRANDS: dict[str, str] = {"rtx": "NVIDIA", "gtx": "NVIDIA", "geforce": "NVIDIA", "rx": "AMD", "radeon": "AMD"}
 NOISE = {"оригинал", "оригинальный", "новый", "новая", "новое", "новые", "новинка", "бу", "б/у", "original", "new",
          "official", "в", "наличии", "dj", "из", "китая"}  # между брендом и моделью — пропустить (не больше 3)
@@ -303,6 +303,8 @@ def normalize(title: str) -> list[str]:
     t = re.sub(r"(?<=[a-z]):(?=\d)", "", t)  # c:62 → c62
     t = re.sub(r"\bgr\s?(i{2,3})(x?)\b", r"gr \1 \2", t)  # Ricoh GRIII → gr iii; GR IIIx → gr iii x
     t = re.sub(r"(?<=\d)mk(?=\d|i)", " mk", t)  # SL-1200MK7 → sl-1200 mk7
+    t = re.sub(r"\binsta\s?360\s?(?=[a-z])", "insta360 ", t)  # insta 360x5, insta360go3s
+    t = re.sub(r"\b(\d{2})(r\d)\b", r"\1 \2", t)  # Alienware 15r3 = 15 r3
     t = re.sub(r"\bmk\s?(\d|i{1,3}|iv)\b", r"mk\1", t)
     t = re.sub(r",", " , ", t)
     t = "".join(ch if ch.isalnum() or ch in " -+/.,'&\"" else " " for ch in t)
@@ -407,7 +409,7 @@ def identify(title: str, domain: str = "generic") -> ProductIdentity:
         if tok == "," or _is_variant(tok, domain):
             break
         fam = next(((f, c) for f, c in fams if tuple(tokens[j : j + len(f)]) == f), None)
-        if fam and (not model or not has_code):
+        if fam and (not model or not has_code or len(fam[0][0]) >= 3):  # Alienware 16 Aurora ≠ 16 Area 51
             model.extend(fam[0])
             complete = complete or fam[1]
             has_family = True
@@ -454,6 +456,9 @@ def identify(title: str, domain: str = "generic") -> ProductIdentity:
         variant_tokens.insert(0, machine)
     variant = " ".join(variant_tokens) or None
     model = _sony_roman(brand, model)
+    if brand.name == "GoPro" and model and model[0].isdigit():  # «Go pro 13», «GoPro 12 Hero Black» = Hero 13 / 12
+        model = ["hero", model[0], *[t for t in model[1:] if t != "hero"]]
+        has_family = True
     model = _join_letter_number(model)
     if not model or not (has_code or complete):
         why = "модель без номера/кода" if model else "модель не найдена"

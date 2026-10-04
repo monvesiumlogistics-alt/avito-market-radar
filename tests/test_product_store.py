@@ -101,3 +101,14 @@ def test_diagnostics_shares_clusters_and_suspicious(tmp_path):
     assert name == "Kugoo Kirin V3 Pro" and any("разброс цены" in f for f in flags)
     assert any("разные коды" in f for f in flags)
     assert d["brand_only"] == [("Kugoo", 1)]
+
+
+def test_rebuild_script_imports_no_browser():
+    """Офлайн по построению: модуль пересборки не тянет Playwright и провайдер браузера."""
+    import subprocess
+    import sys
+
+    banned = "('playwright', 'app.providers.avito_browser')"
+    code = f"import sys, scripts.rebuild_products; print(any(m.startswith({banned}) for m in sys.modules))"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "False"

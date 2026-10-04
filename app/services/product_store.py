@@ -120,6 +120,13 @@ def diagnostics(db: Session, scopes: tuple[str, ...] = ("CORE", "WATCH", "QUERY"
     }
 
 
+def _key_parts(ads: list[Ad]) -> set[str]:
+    """Части ключа модели кластера и их склейки по две (x16 = x + 16)."""
+    key = identify(ads[0].title).canonical_key or ""
+    parts = key.split("|")[1].split("-") if "|" in key else []
+    return set(parts) | {a + b for a, b in zip(parts, parts[1:], strict=False)}
+
+
 def _suspicious(ads: list[Ad]) -> list[str]:
     """Признаки ложного слияния: огромный разброс цены; разные коды с цифрами в заголовках одного товара
     (кроме характеристик) — возможно, под одним ключом несколько моделей."""
@@ -129,8 +136,10 @@ def _suspicious(ads: list[Ad]) -> list[str]:
         for a in ads:
             toks = normalize(a.title)
             codes.update({t for t in toks if any(c.isdigit() for c in t) and not _is_variant(t, "laptop")})
+        key_parts = _key_parts(ads)
         common = {t for t, n in codes.items() if n == len(ads)}  # код самой модели есть во всех
-        odd = [t for t, n in codes.items() if t not in common and n >= 2]
+        odd = [t for t, n in codes.items() if t not in common and n >= 2 and t not in key_parts
+               and not (t.isdigit() and len(t) <= 2)]  # «x 16» vs «x16», «Ryzen 5» — не другие модели  # fmt: skip
         if len(odd) >= 3:
             flags.append("разные коды в заголовках: " + ", ".join(sorted(odd)[:6]))
     prices = sorted(a.price for a in ads if a.price)

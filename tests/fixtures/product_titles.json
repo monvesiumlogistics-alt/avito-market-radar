@@ -1262,5 +1262,101 @@
   "canonical_key": "teyes|cc3",
   "confidence": "HIGH",
   "source": "synthetic"
+ },
+ {
+  "title": "Alienware 16 Aurora Core 9 270H / RTX 5070",
+  "domain": "laptop",
+  "brand_slug": "alienware",
+  "canonical_key": "alienware|16-aurora",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Alienware 16 area 51 64GB 4TB U9 275HX RTX 5080",
+  "domain": "laptop",
+  "brand_slug": "alienware",
+  "canonical_key": "alienware|16-area-51",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Dell Alienware 16 Area-51 RTX5080 Ultra 9 64GB USA",
+  "domain": "laptop",
+  "brand_slug": "alienware",
+  "canonical_key": "alienware|16-area-51",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Osmo Action 5 Pro",
+  "domain": "generic",
+  "brand_slug": "dji",
+  "canonical_key": "dji|osmo-action-5-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Экшн камера insta 360x5",
+  "domain": "generic",
+  "brand_slug": "insta360",
+  "canonical_key": "insta360|x5",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Экшен камера Go pro 13",
+  "domain": "generic",
+  "brand_slug": "gopro",
+  "canonical_key": "gopro|hero-13",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "GoPro 12 Hero Blaсk",
+  "domain": "generic",
+  "brand_slug": "gopro",
+  "canonical_key": "gopro|hero-12",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Dji Osmo nano 64gb",
+  "domain": "generic",
+  "brand_slug": "dji",
+  "canonical_key": "dji|osmo-nano",
+  "confidence": "MEDIUM",
+  "source": "db"
+ },
+ {
+  "title": "Ноутбук Honor Hunter Core i5 GTX 1660Ti 144гц 16\"",
+  "domain": "laptop",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "db"
+ },
+ {
+  "title": "Камера gopro hero session 4",
+  "domain": "generic",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "db"
+ },
+ {
+  "title": "Игровой ноутбук alienware 15r3",
+  "domain": "laptop",
+  "brand_slug": "alienware",
+  "canonical_key": "alienware|15-r3",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Alienware 15 R3 i7",
+  "domain": "laptop",
+  "brand_slug": "alienware",
+  "canonical_key": "alienware|15-r3",
+  "confidence": "HIGH",
+  "source": "db"
  }
 ]
