@@ -311,7 +311,10 @@ def format_margin(m: Margin, price_rub: int, rate: float, ground_per_kg: float) 
 
 
 def goofish_url(title: str) -> str | None:
-    q = goofish_query(title)
+    """Поиск на goofish: распознанный товар — «бренд модель» (ADR-022), иначе латинские токены заголовка."""
+    from app.services.products import goofish_query_for, identify  # products не зависит от market_logic
+
+    q = goofish_query_for(identify(title)) or goofish_query(title)
     return f"https://www.goofish.com/search?q={quote_plus(q)}" if q else None
 
 

@@ -1,0 +1,1266 @@
+[
+ {
+  "title": "Электровелосипед",
+  "domain": "ebike",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед кроссовый",
+  "domain": "ebike",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед hualu h10 70ah",
+  "domain": "ebike",
+  "brand_slug": "hualu",
+  "canonical_key": "hualu|h10",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед hualu f3",
+  "domain": "ebike",
+  "brand_slug": "hualu",
+  "canonical_key": "hualu|f3",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед Hualu h8",
+  "domain": "ebike",
+  "brand_slug": "hualu",
+  "canonical_key": "hualu|h8",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед Wenbox u3 pro",
+  "domain": "ebike",
+  "brand_slug": "wenbox",
+  "canonical_key": "wenbox|u3-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед kugoo kirin v3 Pro и 2 акб 60/21",
+  "domain": "ebike",
+  "brand_slug": "kugoo",
+  "canonical_key": "kugoo|kirin-v3-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед Kugoo Kirin K1 Pro",
+  "domain": "ebike",
+  "brand_slug": "kugoo",
+  "canonical_key": "kugoo|kirin-k1-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Kugoo R2 полный привод",
+  "domain": "ebike",
+  "brand_slug": "kugoo",
+  "canonical_key": "kugoo|r2",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Kugoo wish 02 pro",
+  "domain": "ebike",
+  "brand_slug": "kugoo",
+  "canonical_key": "kugoo|wish-02-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед бу kugoо",
+  "domain": "ebike",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "db"
+ },
+ {
+  "title": "Aimiko u2 premium 3000w",
+  "domain": "ebike",
+  "brand_slug": "aimiko",
+  "canonical_key": "aimiko|u2-premium",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед Strong u2",
+  "domain": "ebike",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед U2 2акб",
+  "domain": "ebike",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед Gepard Z7-2",
+  "domain": "ebike",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Шоссейный вел Speciliazed Tarmac Sl7 размеры 52 54",
+  "domain": "bike",
+  "brand_slug": "specialized",
+  "canonical_key": "specialized|tarmac-sl7",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Cube nuroad c:62 pro carbon",
+  "domain": "bike",
+  "brand_slug": "cube",
+  "canonical_key": "cube|nuroad-c62-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Шоссейный велосипед Bianchi Infinito CV",
+  "domain": "bike",
+  "brand_slug": "bianchi",
+  "canonical_key": "bianchi|infinito-cv",
+  "confidence": "MEDIUM",
+  "source": "db"
+ },
+ {
+  "title": "Шоссейный велосипед Pinarello Gan Disc (карбон)",
+  "domain": "bike",
+  "brand_slug": "pinarello",
+  "canonical_key": "pinarello|gan-disc",
+  "confidence": "MEDIUM",
+  "source": "db"
+ },
+ {
+  "title": "184-192см Новый Аэро BMC Teammachine R01 FiVE",
+  "domain": "bike",
+  "brand_slug": "bmc",
+  "canonical_key": "bmc|teammachine-r01",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Felt broam 30 (2024) М/54",
+  "domain": "bike",
+  "brand_slug": "felt",
+  "canonical_key": "felt|broam-30",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Factor slick",
+  "domain": "bike",
+  "brand_slug": "factor",
+  "canonical_key": "factor|slick",
+  "confidence": "MEDIUM",
+  "source": "db"
+ },
+ {
+  "title": "Шоссейный велосипед Polygon strattos 7",
+  "domain": "bike",
+  "brand_slug": "polygon",
+  "canonical_key": "polygon|strattos-7",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Cervélo Soloist 2026",
+  "domain": "bike",
+  "brand_slug": "cervelo",
+  "canonical_key": "cervelo|soloist",
+  "confidence": "MEDIUM",
+  "source": "db"
+ },
+ {
+  "title": "Canyon Endurace CF 7 (2023) М/56",
+  "domain": "bike",
+  "brand_slug": "canyon",
+  "canonical_key": "canyon|endurace-cf-7",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Шоссейный велосипед Focus Izalco Max 8.9",
+  "domain": "bike",
+  "brand_slug": "focus",
+  "canonical_key": "focus|izalco-max-8.9",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Гревел Canyon Grail",
+  "domain": "bike",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "db"
+ },
+ {
+  "title": "Шоссейный велосипед Merida Reacto",
+  "domain": "bike",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "db"
+ },
+ {
+  "title": "Велосипед взрослый",
+  "domain": "bike",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Велосипеды бу взрослый",
+  "domain": "bike",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Шоссейный велосипед",
+  "domain": "bike",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Карбоновый велосипед Pardus Super Sport 105",
+  "domain": "bike",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Камера gopro hero 13 black",
+  "domain": "generic",
+  "brand_slug": "gopro",
+  "canonical_key": "gopro|hero-13",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Камера gopro hero 11 black",
+  "domain": "generic",
+  "brand_slug": "gopro",
+  "canonical_key": "gopro|hero-11",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Gopro hero 11",
+  "domain": "generic",
+  "brand_slug": "gopro",
+  "canonical_key": "gopro|hero-11",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Экшн-камера Gopro hero 12 black GPH12",
+  "domain": "generic",
+  "brand_slug": "gopro",
+  "canonical_key": "gopro|hero-12",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "GoPro hero 6 Black + GoPro Karma Grip",
+  "domain": "generic",
+  "brand_slug": "gopro",
+  "canonical_key": "gopro|hero-6",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Камера gopro max 360",
+  "domain": "generic",
+  "brand_slug": "gopro",
+  "canonical_key": "gopro|max-360",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Insta 360 x3",
+  "domain": "generic",
+  "brand_slug": "insta360",
+  "canonical_key": "insta360|x3",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Экшн камера insta360 x5 essentials bundle",
+  "domain": "generic",
+  "brand_slug": "insta360",
+  "canonical_key": "insta360|x5",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Экшн камера insta360 x4",
+  "domain": "generic",
+  "brand_slug": "insta360",
+  "canonical_key": "insta360|x4",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Экшн-камера Insta360 ACE PRO 2 (2 батареи)",
+  "domain": "generic",
+  "brand_slug": "insta360",
+  "canonical_key": "insta360|ace-pro-2",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Экшн-камера DJI Osmo Action 5 Pro Adventure Combo",
+  "domain": "generic",
+  "brand_slug": "dji",
+  "canonical_key": "dji|osmo-action-5-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Dji Osmo action 5 pro adventure combo",
+  "domain": "generic",
+  "brand_slug": "dji",
+  "canonical_key": "dji|osmo-action-5-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Dji Osmo Action 4 adventure combo + аксессуары",
+  "domain": "generic",
+  "brand_slug": "dji",
+  "canonical_key": "dji|osmo-action-4",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Dji osmo pocket 3 большой комплект",
+  "domain": "generic",
+  "brand_slug": "dji",
+  "canonical_key": "dji|osmo-pocket-3",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Камера dji osmo Pocket 2",
+  "domain": "generic",
+  "brand_slug": "dji",
+  "canonical_key": "dji|osmo-pocket-2",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Экшен-камера dji osma pocket 2",
+  "domain": "generic",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "db"
+ },
+ {
+  "title": "Портативная Карманная Экшн-камера",
+  "domain": "generic",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Ноутбук honor MagicBook X16 AMD 2025",
+  "domain": "laptop",
+  "brand_slug": "honor",
+  "canonical_key": "honor|magicbook-x16",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Ноутбук honor MagicBook X 16",
+  "domain": "laptop",
+  "brand_slug": "honor",
+  "canonical_key": "honor|magicbook-x16",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "16\" Ноутбук honor MagicBook X 16 BRN-F56 серый",
+  "domain": "laptop",
+  "brand_slug": "honor",
+  "canonical_key": "honor|magicbook-x16|brn-f56",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Honor Magicbook X16 i5-13420h 16/512Гб",
+  "domain": "laptop",
+  "brand_slug": "honor",
+  "canonical_key": "honor|magicbook-x16",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Ноутбук honor MagicBook X16 i5 12450H/16/512",
+  "domain": "laptop",
+  "brand_slug": "honor",
+  "canonical_key": "honor|magicbook-x16",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Honor MB Art 14 2025 U7-255H 32/1тб Закатный",
+  "domain": "laptop",
+  "brand_slug": "honor",
+  "canonical_key": "honor|magicbook-art-14",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Honor MagicBook Art 14 Ultra5-125H/16Gb/1Tb/Touch",
+  "domain": "laptop",
+  "brand_slug": "honor",
+  "canonical_key": "honor|magicbook-art-14",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Honor MagicBook Art 14 U7 155H 32/1Тб 3K 120Hz",
+  "domain": "laptop",
+  "brand_slug": "honor",
+  "canonical_key": "honor|magicbook-art-14",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Honor magicbook pro 16",
+  "domain": "laptop",
+  "brand_slug": "honor",
+  "canonical_key": "honor|magicbook-pro-16",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Honor magicbook x 16 pro",
+  "domain": "laptop",
+  "brand_slug": "honor",
+  "canonical_key": "honor|magicbook-x16-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Ноутбук honor Magicbook 15",
+  "domain": "laptop",
+  "brand_slug": "honor",
+  "canonical_key": "honor|magicbook-15",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Honor MagicBook X14 Plus 220H 16GB 512gb новый",
+  "domain": "laptop",
+  "brand_slug": "honor",
+  "canonical_key": "honor|magicbook-x14-plus",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Игровой Ноутбук Honor 1660ti i5-10300 16/512 144Hz",
+  "domain": "laptop",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "db"
+ },
+ {
+  "title": "Ноутбук Honor MagicBook 2021",
+  "domain": "laptop",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "db"
+ },
+ {
+  "title": "Ноутбук Honor",
+  "domain": "laptop",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "db"
+ },
+ {
+  "title": "Безрамочные мега мощные ноуты/ гарантия",
+  "domain": "laptop",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Игровой ноутбук Alienware на RTX 3080 + Core i7",
+  "domain": "laptop",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "db"
+ },
+ {
+  "title": "Alienware m18 R2 i9 / RTX 4070 / 32GB",
+  "domain": "laptop",
+  "brand_slug": "alienware",
+  "canonical_key": "alienware|m18-r2",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Часы garmin fenix 7x sapphire solar",
+  "domain": "watch",
+  "brand_slug": "garmin",
+  "canonical_key": "garmin|fenix-7x",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Rolex oyster perpetual datejust 41",
+  "domain": "watch",
+  "brand_slug": "rolex",
+  "canonical_key": "rolex|datejust-41",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Часы мужские Richard Mille RM 67-01",
+  "domain": "watch",
+  "brand_slug": "richard-mille",
+  "canonical_key": "richard-mille|rm-67-01",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Часы Ulysse Nardin Marine Gold Blue",
+  "domain": "watch",
+  "brand_slug": "ulysse-nardin",
+  "canonical_key": "ulysse-nardin|marine",
+  "confidence": "MEDIUM",
+  "source": "db"
+ },
+ {
+  "title": "Часы мужские Patek Philippe Aquanaut",
+  "domain": "watch",
+  "brand_slug": "patek-philippe",
+  "canonical_key": "patek-philippe|aquanaut",
+  "confidence": "MEDIUM",
+  "source": "db"
+ },
+ {
+  "title": "Наручные часы tissot prx",
+  "domain": "watch",
+  "brand_slug": "tissot",
+  "canonical_key": "tissot|prx",
+  "confidence": "MEDIUM",
+  "source": "db"
+ },
+ {
+  "title": "Женские часы Casio / Оригинал",
+  "domain": "watch",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "db"
+ },
+ {
+  "title": "Мужские наручные часы механические",
+  "domain": "watch",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Часы из эпоксидной смолы",
+  "domain": "watch",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "iPhone 12 Pro Max, 128 ГБ",
+  "domain": "phone",
+  "brand_slug": "apple",
+  "canonical_key": "apple|iphone-12-pro-max",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "iPhone 12 Pro, 256 ГБ",
+  "domain": "phone",
+  "brand_slug": "apple",
+  "canonical_key": "apple|iphone-12-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "iPhone 12 mini, 128 ГБ, SIM + eSIM",
+  "domain": "phone",
+  "brand_slug": "apple",
+  "canonical_key": "apple|iphone-12-mini",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "iPhone 15 Pro Max, 256 ГБ, 1 SIM",
+  "domain": "phone",
+  "brand_slug": "apple",
+  "canonical_key": "apple|iphone-15-pro-max",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "iPhone 16, 256 ГБ, SIM + eSIM",
+  "domain": "phone",
+  "brand_slug": "apple",
+  "canonical_key": "apple|iphone-16",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "iPhone Xs Max, 512 ГБ",
+  "domain": "phone",
+  "brand_slug": "apple",
+  "canonical_key": "apple|iphone-xs-max",
+  "confidence": "MEDIUM",
+  "source": "db"
+ },
+ {
+  "title": "Xiaomi 14, 16/512 ГБ, 2 SIM",
+  "domain": "phone",
+  "brand_slug": "xiaomi",
+  "canonical_key": "xiaomi|14",
+  "confidence": "MEDIUM",
+  "source": "db"
+ },
+ {
+  "title": "Samsung Galaxy A57, 8/256 ГБ, SIM + eSIM",
+  "domain": "phone",
+  "brand_slug": "samsung",
+  "canonical_key": "samsung|galaxy-a57",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Samsung Galaxy S23 Ultra, 12/256 ГБ, SIM + eSIM",
+  "domain": "phone",
+  "brand_slug": "samsung",
+  "canonical_key": "samsung|galaxy-s23-ultra",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "TECNO Spark 40 Pro, 8/256 ГБ, 2 SIM",
+  "domain": "phone",
+  "brand_slug": "tecno",
+  "canonical_key": "tecno|spark-40-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "HONOR X9d, 12/256 ГБ, 2 SIM",
+  "domain": "phone",
+  "brand_slug": "honor",
+  "canonical_key": "honor|x9d",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Бинокль Levenhuk Sherman Pro 12x50",
+  "domain": "optics",
+  "brand_slug": "levenhuk",
+  "canonical_key": "levenhuk|sherman-pro-12x50",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Бинокль Levenhuk Sherman Pro 8x42",
+  "domain": "optics",
+  "brand_slug": "levenhuk",
+  "canonical_key": "levenhuk|sherman-pro-8x42",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Бинокль Levenhuk Bruno plus 25x100",
+  "domain": "optics",
+  "brand_slug": "levenhuk",
+  "canonical_key": "levenhuk|bruno-plus-25x100",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Sky-Watcher Heritage 130P 130/650",
+  "domain": "optics",
+  "brand_slug": "sky-watcher",
+  "canonical_key": "sky-watcher|heritage-130p",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Телескоп Sky watcher BK MAK 102EQ2",
+  "domain": "optics",
+  "brand_slug": "sky-watcher",
+  "canonical_key": "sky-watcher|bk-mak-102eq2",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Линзовый телескоп Vixen VMC95L Mini Porta",
+  "domain": "optics",
+  "brand_slug": "vixen",
+  "canonical_key": "vixen|vmc95l-mini",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Зрительная труба svbony SV41 pro",
+  "domain": "optics",
+  "brand_slug": "svbony",
+  "canonical_key": "svbony|sv41-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Бинокль бпц 12х45 сделано в СССР",
+  "domain": "optics",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Для Андрей бронь",
+  "domain": "optics",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "db"
+ },
+ {
+  "title": "Pioneer DDJ-FLX4",
+  "domain": "generic",
+  "brand_slug": "pioneer",
+  "canonical_key": "pioneer|ddj-flx4",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Pioneer DDJ FLX4",
+  "domain": "generic",
+  "brand_slug": "pioneer",
+  "canonical_key": "pioneer|ddj-flx4",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Pioneer DJ DDJ-FLX4",
+  "domain": "generic",
+  "brand_slug": "pioneer",
+  "canonical_key": "pioneer|ddj-flx4",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Контроллер Pioneer DDJ-FLX4",
+  "domain": "generic",
+  "brand_slug": "pioneer",
+  "canonical_key": "pioneer|ddj-flx4",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "🔥НОВИНКА🔥 Pioneer оригинал DDJ-FLX4 в наличии",
+  "domain": "generic",
+  "brand_slug": "pioneer",
+  "canonical_key": "pioneer|ddj-flx4",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "DJ контроллер DDJ-FLX10",
+  "domain": "generic",
+  "brand_slug": "pioneer",
+  "canonical_key": "pioneer|ddj-flx10",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Pioneer XDJ-RX3",
+  "domain": "generic",
+  "brand_slug": "pioneer",
+  "canonical_key": "pioneer|xdj-rx3",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "XDJ RX3 pioneer",
+  "domain": "generic",
+  "brand_slug": "pioneer",
+  "canonical_key": "pioneer|xdj-rx3",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Pioneer CDJ-3000",
+  "domain": "generic",
+  "brand_slug": "pioneer",
+  "canonical_key": "pioneer|cdj-3000",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Technics SL-1200MK7",
+  "domain": "generic",
+  "brand_slug": "technics",
+  "canonical_key": "technics|sl-1200-mk7",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Allen & Heath Xone 96",
+  "domain": "generic",
+  "brand_slug": "allen-heath",
+  "canonical_key": "allen-heath|xone-96",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Korg Minilogue XD",
+  "domain": "generic",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "synthetic"
+ },
+ {
+  "title": "Akai MPC One",
+  "domain": "generic",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "synthetic"
+ },
+ {
+  "title": "Sony A7 III body",
+  "domain": "generic",
+  "brand_slug": "sony",
+  "canonical_key": "sony|a7-iii",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Sony Alpha A7 IV",
+  "domain": "generic",
+  "brand_slug": "sony",
+  "canonical_key": "sony|a7-iv",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Sony A7IV",
+  "domain": "generic",
+  "brand_slug": "sony",
+  "canonical_key": "sony|a7-iv",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Sony a7 4 kit",
+  "domain": "generic",
+  "brand_slug": "sony",
+  "canonical_key": "sony|a7-iv",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Fujifilm X100V",
+  "domain": "generic",
+  "brand_slug": "fujifilm",
+  "canonical_key": "fujifilm|x100-v",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Fujifilm X100VI silver",
+  "domain": "generic",
+  "brand_slug": "fujifilm",
+  "canonical_key": "fujifilm|x100-vi",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Fujifilm X-T5",
+  "domain": "generic",
+  "brand_slug": "fujifilm",
+  "canonical_key": "fujifilm|xt5",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Fujifilm XT5",
+  "domain": "generic",
+  "brand_slug": "fujifilm",
+  "canonical_key": "fujifilm|xt5",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Ricoh GR III",
+  "domain": "generic",
+  "brand_slug": "ricoh",
+  "canonical_key": "ricoh|gr-iii",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Ricoh GRIII",
+  "domain": "generic",
+  "brand_slug": "ricoh",
+  "canonical_key": "ricoh|gr-iii",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Ricoh GR IIIx",
+  "domain": "generic",
+  "brand_slug": "ricoh",
+  "canonical_key": "ricoh|gr-iii-x",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "DJI Mini 3",
+  "domain": "generic",
+  "brand_slug": "dji",
+  "canonical_key": "dji|mini-3",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "DJI Mini 3 Pro",
+  "domain": "generic",
+  "brand_slug": "dji",
+  "canonical_key": "dji|mini-3-pro",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "DJI Mini 4 Pro Fly More Combo",
+  "domain": "generic",
+  "brand_slug": "dji",
+  "canonical_key": "dji|mini-4-pro",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Квадрокоптер DJI Avata 2",
+  "domain": "generic",
+  "brand_slug": "dji",
+  "canonical_key": "dji|avata-2",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "DJI Avata",
+  "domain": "generic",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "synthetic"
+ },
+ {
+  "title": "Lenovo Legion 5",
+  "domain": "laptop",
+  "brand_slug": "lenovo",
+  "canonical_key": "lenovo|legion-5",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Lenovo Legion 5 Pro 16IRX9 32/1tb",
+  "domain": "laptop",
+  "brand_slug": "lenovo",
+  "canonical_key": "lenovo|legion-5-pro|16irx9",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Lenovo Legion 5 Pro",
+  "domain": "laptop",
+  "brand_slug": "lenovo",
+  "canonical_key": "lenovo|legion-5-pro",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Lenovo Legion 7",
+  "domain": "laptop",
+  "brand_slug": "lenovo",
+  "canonical_key": "lenovo|legion-7",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Lenovo Legion Pro 7 RTX 4080",
+  "domain": "laptop",
+  "brand_slug": "lenovo",
+  "canonical_key": "lenovo|legion-pro-7",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Lenovo Legion gaming laptop",
+  "domain": "laptop",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "synthetic"
+ },
+ {
+  "title": "Игровой ноутбук отличный новый",
+  "domain": "laptop",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "UNKNOWN",
+  "source": "synthetic"
+ },
+ {
+  "title": "Lenovo Legion Go",
+  "domain": "generic",
+  "brand_slug": "lenovo",
+  "canonical_key": "lenovo|legion-go",
+  "confidence": "MEDIUM",
+  "source": "synthetic"
+ },
+ {
+  "title": "Steam Deck OLED 512",
+  "domain": "generic",
+  "brand_slug": "valve",
+  "canonical_key": "valve|steam-deck-oled",
+  "confidence": "MEDIUM",
+  "source": "synthetic"
+ },
+ {
+  "title": "Moza R5 bundle",
+  "domain": "generic",
+  "brand_slug": "moza",
+  "canonical_key": "moza|r5",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Moza R9",
+  "domain": "generic",
+  "brand_slug": "moza",
+  "canonical_key": "moza|r9",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "RTX 4070",
+  "domain": "pc",
+  "brand_slug": "nvidia",
+  "canonical_key": "nvidia|rtx-4070",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Видеокарта RTX 4070 Ti",
+  "domain": "pc",
+  "brand_slug": "nvidia",
+  "canonical_key": "nvidia|rtx-4070-ti",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "RTX 4070ti 12gb",
+  "domain": "pc",
+  "brand_slug": "nvidia",
+  "canonical_key": "nvidia|rtx-4070-ti",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Видеокарта ASUS TUF RTX 4070 Super",
+  "domain": "pc",
+  "brand_slug": "nvidia",
+  "canonical_key": "nvidia|rtx-4070-super",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "RTX 4090",
+  "domain": "pc",
+  "brand_slug": "nvidia",
+  "canonical_key": "nvidia|rtx-4090",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Palit RTX 4090 GameRock",
+  "domain": "pc",
+  "brand_slug": "nvidia",
+  "canonical_key": "nvidia|rtx-4090",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Aimiko U2",
+  "domain": "ebike",
+  "brand_slug": "aimiko",
+  "canonical_key": "aimiko|u2",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Aimiko u2 pro 48V 20Ah",
+  "domain": "ebike",
+  "brand_slug": "aimiko",
+  "canonical_key": "aimiko|u2-pro",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Электровелосипед Aimiko U2 Pro",
+  "domain": "ebike",
+  "brand_slug": "aimiko",
+  "canonical_key": "aimiko|u2-pro",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Stone Island jacket",
+  "domain": "fashion",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "synthetic"
+ },
+ {
+  "title": "Брюки карго Stone Island",
+  "domain": "fashion",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "synthetic"
+ },
+ {
+  "title": "Куртка Stone Island Shadow Project",
+  "domain": "fashion",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "synthetic"
+ },
+ {
+  "title": "Prada 42",
+  "domain": "fashion",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "synthetic"
+ },
+ {
+  "title": "Куртка Arc'teryx Beta LT",
+  "domain": "fashion",
+  "brand_slug": "arc-teryx",
+  "canonical_key": "arc-teryx|beta-lt",
+  "confidence": "MEDIUM",
+  "source": "synthetic"
+ },
+ {
+  "title": "ARC’TERYX Beta LT jacket",
+  "domain": "fashion",
+  "brand_slug": "arc-teryx",
+  "canonical_key": "arc-teryx|beta-lt",
+  "confidence": "MEDIUM",
+  "source": "synthetic"
+ },
+ {
+  "title": "Кроссовки New Balance 990v6",
+  "domain": "fashion",
+  "brand_slug": "new-balance",
+  "canonical_key": "new-balance|990v6",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Nike Air Force 1 low",
+  "domain": "fashion",
+  "brand_slug": "nike",
+  "canonical_key": "nike|air-force-1",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ },
+ {
+  "title": "Сумка Louis Vuitton Keepall 50",
+  "domain": "fashion",
+  "brand_slug": "louis-vuitton",
+  "canonical_key": "louis-vuitton|keepall",
+  "confidence": "MEDIUM",
+  "source": "synthetic"
+ },
+ {
+  "title": "Supreme box logo hoodie",
+  "domain": "fashion",
+  "brand_slug": null,
+  "canonical_key": null,
+  "confidence": "LOW",
+  "source": "synthetic"
+ },
+ {
+  "title": "Коляска Doona X",
+  "domain": "generic",
+  "brand_slug": "doona",
+  "canonical_key": "doona|x",
+  "confidence": "MEDIUM",
+  "source": "synthetic"
+ },
+ {
+  "title": "Bugaboo Dragonfly",
+  "domain": "generic",
+  "brand_slug": "bugaboo",
+  "canonical_key": "bugaboo|dragonfly",
+  "confidence": "MEDIUM",
+  "source": "synthetic"
+ },
+ {
+  "title": "Магнитола Teyes CC3 2K",
+  "domain": "generic",
+  "brand_slug": "teyes",
+  "canonical_key": "teyes|cc3",
+  "confidence": "HIGH",
+  "source": "synthetic"
+ }
+]
