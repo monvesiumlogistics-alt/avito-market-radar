@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import logging
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -157,6 +157,7 @@ class MarketCrawler:
         self.kind = "report"  # report (/report) | sweep (ежедневный обход выдачи, ADR-016)
         self.captcha_waits = 0
         self._quiet = 0  # тихих категорий, пропущенных обходом
+        self.deep_counts: Counter = Counter()  # Phase 4: открыто карточек по выборкам
 
     # --- жизненный цикл ---
 
@@ -166,6 +167,8 @@ class MarketCrawler:
 
     @property
     def budget(self) -> int:
+        if self.kind == "deep":
+            return self.settings.deep_budget
         return self.settings.sweep_budget if self.kind == "sweep" else self.settings.report_budget
 
     def start(self, kind: str = "report") -> str:
@@ -205,6 +208,7 @@ class MarketCrawler:
             db.commit()
             self.run_id, self.loads, self._loads_saved = run.id, 0, 0
         self.kind, self.captcha_waits, self._quiet, self.blocks = kind, 0, 0, 0
+        self.deep_counts = Counter()
         self.stop_requested, self.errors = False, []
         self._progress_at = self._progress_id = None
         self.gone_ids = []
@@ -256,6 +260,8 @@ class MarketCrawler:
                     self._ticker = asyncio.create_task(self._tick())
                 if self.kind == "sweep":
                     await self._sweep_all()
+                elif self.kind == "deep":
+                    await self._deep_scan()
                 else:
                     await self._recheck_finds()
                     await self.discover_sections()
@@ -325,6 +331,61 @@ class MarketCrawler:
                 log.error("[MARKET] %d ошибок подряд, прогон остановлен", streak)
                 raise BreakerTripped
             await self._send_progress()
+
+    async def _deep_scan(self) -> None:
+        """Phase 4 (ADR-025): норма категорий → 1 карточка на кандидата → вторые карточки сильным. Только карточки,
+        без профилей продавцов; объявление не открывается чаще раза в сутки; всё через AvitoTraffic."""
+        from app.services import candidates as cand_engine
+        from app.services import deep_scan as plan
+
+        now = self.clock()
+        with self.session_factory() as db:
+            cands = [c for c in cand_engine.run(db, now)["candidates"] if c.confidence in ("MEDIUM", "LOW")]
+            base = plan.plan_baseline(db, now, cands, min(plan.BASELINE_BUDGET, self.budget - 1))
+            planned = set(plan.categories_of(db, base))
+        await self._observe_all(base)
+        with self.session_factory() as db:
+            first = plan.plan_first_pass(db, now, cands, planned_baseline=planned)
+        await self._observe_all(first)
+        for _ in range(2):  # вторая, затем третья карточка — пока есть бюджет
+            left = self.budget - self.loads
+            if left <= 0:
+                break
+            with self.session_factory() as db:
+                more = plan.plan_followups(db, self.clock(), cands, left)
+            if not more:
+                break
+            await self._observe_all(more)
+
+    async def _observe_all(self, picks) -> None:
+        for pick in picks:
+            if self.loads >= self.budget:
+                raise BudgetExhausted
+            self._current = f"🔬 {pick.bucket}: {pick.url_path[-40:]}"
+            await self._observe(pick)
+            await self._send_progress()
+
+    async def _observe(self, pick) -> None:
+        """Одна карточка: просмотры, дата со страницы, ссылка продавца → card_obs (bucket выборки)."""
+        now = self.clock()
+        try:
+            res = await self._fetch(BASE_URL + pick.url_path, SELECTORS["item_views"][0], "card")
+        except (StopRequested, BudgetExhausted, ProviderBlocked, BrowserLost):
+            raise
+        except Exception as e:
+            log.warning("[DEEP] карточка %s: %s", pick.url_path, e)
+            self.errors.append(f"{pick.url_path[-50:]}: {type(e).__name__}: {e}")
+            return
+        with self.session_factory() as db:
+            if is_gone(res.html, res.title, res.status):
+                record_gone(db, pick.ad_id, now)
+            else:
+                st = parse_item_page(res.html)
+                page_date = parse_published(st.date_text, now, absolute_time=True)
+                record_card(db, pick.ad_id, now, self.run_id, pick.bucket, st.views, st.today, page_date, "card",
+                            st.seller_url)  # fmt: skip
+            db.commit()
+        self.deep_counts[pick.bucket] += 1
 
     async def _sweep_all(self) -> None:
         """Ежедневный обход выдачи (ADR-016): глубина по темпу категории, тихие — через день, давно не бывшие —
@@ -508,6 +569,12 @@ class MarketCrawler:
         """Итог (формат D): все находки прогона (и 🔥 тоже) по разделам + ушедшие при перепроверке (ADR-013)."""
         if self.kind == "sweep":  # итог обхода = утренний радар, телеметрия обхода — свёрнутым блоком (ADR-017)
             await self._send_many(self.radar_texts(tail=self._sweep_summary(status)))
+            return
+        if self.kind == "deep":
+            counts = ", ".join(f"{k} {v}" for k, v in self.deep_counts.items()) or "0"
+            note = STATUS_NOTES.get(status, "")
+            await self._send_many([f"<b>🔬 Выборочные карточки</b>\nОткрыто: {counts} · загрузок {self.loads}"
+                                   f"\n{self.traffic.summary()}" + (f"\n{note}" if note else "")])  # fmt: skip
             return
         s = self.settings
         with self.session_factory() as db:
