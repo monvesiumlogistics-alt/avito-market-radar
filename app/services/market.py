@@ -217,7 +217,7 @@ class MarketCrawler:
         self._task = asyncio.create_task(self._run())
         return reply
 
-    def daily(self) -> bool:
+    async def daily(self) -> bool:  # async: APScheduler выполнит в цикле событий, а не в потоке без loop
         """По расписанию и при старте бота: ежедневный обход, если пора и сегодня ещё не было (ADR-016)."""
         if self.running:
             return False

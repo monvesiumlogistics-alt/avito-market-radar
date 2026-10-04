@@ -151,11 +151,11 @@ async def test_quiet_category_skipped_next_day(tmp_path):
 
 async def test_daily_starts_sweep_once(tmp_path):
     t = life(tmp_path, {"A": [900]}, daily_sweep_at="09:00")
-    assert t.crawler.daily() is True
+    assert await t.crawler.daily() is True
     await t.crawler._task
-    assert t.crawler.daily() is False  # сегодня уже был
+    assert await t.crawler.daily() is False  # сегодня уже был
     t.now[0] = NOW.replace(hour=8) + timedelta(days=1)
-    assert t.crawler.daily() is False  # завтра до 09:00
+    assert await t.crawler.daily() is False  # завтра до 09:00
 
 
 async def test_sweep_command():
