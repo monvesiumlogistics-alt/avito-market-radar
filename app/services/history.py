@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import Ad, AdEvent, CardObs
+from app.db import Ad, AdEvent, AdQuerySighting, CardObs
 from app.models import Listing
 from app.services.market_logic import model_key
 
@@ -32,31 +32,35 @@ def record_search(
 ) -> tuple[int, int]:
     """Upsert объявлений со страницы выдачи. Возвращает (новых, уже известных) среди непромо-карточек.
 
-    query=True — выдача поискового среза (ADR-020): объявление запоминает срез (query_id), но настоящей категорией
-    становится та, где его увидят в обычной выдаче; для неё такое объявление считается новым."""
+    query=True — выдача поискового запроса (ADR-021): category_id не назначается (запрос — не категория), пишется
+    sighting (объявление × запрос). Вызывающий передаёт только карточки, прошедшие проверку совпадения с запросом.
+    Обычная выдача: объявление без категории получает её и для этой категории считается новым."""
     promo = set(promo)
     have = {a.id: a for a in db.scalars(select(Ad).where(Ad.id.in_([c.external_id for c in cards])))}
     new = known = 0
+    sightings: dict[str, AdQuerySighting] = {}
     for c in cards:
         is_promo = c.external_id in promo
         ad = have.get(c.external_id)
         if ad is None:
             ad = Ad(
-                id=c.external_id, category_id=category_id, title=c.title[:500], model_key=model_key(c.title),
+                id=c.external_id, category_id=None if query else category_id, title=c.title[:500],
+                model_key=model_key(c.title),
                 price=c.price, url_path=urlsplit(c.url).path[:500], city=c.location, shop=c.seller_name,
                 image_url=c.image_url, posted_at=c.published_at, posted_src="search" if c.published_at else None,
                 first_seen_at=now, last_seen_at=now, promoted_seen=int(is_promo), status="live",
-                query_id=category_id if query else None,
             )  # fmt: skip
             db.add(ad)
             have[ad.id] = ad
             new += not is_promo
+            if query:
+                _sight(db, sightings, ad.id, category_id, now)
             continue
         if query:
-            ad.query_id = ad.query_id or category_id
+            _sight(db, sightings, ad.id, category_id, now)
             known += not is_promo
-        elif ad.query_id is not None and ad.category_id == ad.query_id:
-            ad.category_id = category_id  # до сих пор видели только в срезе: теперь у объявления есть категория
+        elif ad.category_id is None:
+            ad.category_id = category_id  # до сих пор видели только через запросы: теперь есть категория
             new += not is_promo
         else:
             known += not is_promo
@@ -74,6 +78,15 @@ def record_search(
         if ad.shop is None and c.seller_name:
             ad.shop = c.seller_name
     return new, known
+
+
+def _sight(db: Session, cache: dict, ad_id: str, query_id: int, now: datetime) -> None:
+    s = cache.get(ad_id) or db.get(AdQuerySighting, (ad_id, query_id))
+    if s is None:
+        s = AdQuerySighting(ad_id=ad_id, query_category_id=query_id, first_seen_at=now, last_seen_at=now)
+        db.add(s)
+    s.last_seen_at = now
+    cache[ad_id] = s
 
 
 def record_card(

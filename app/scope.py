@@ -911,3 +911,26 @@ EXTRA_QUERIES: dict[str, tuple[str, str, str, str]] = {
     "/rossiya?q=dji+mini": ("QUERY", "DJI Mini", "audio_i_video", ""),
     "/rossiya?q=dji+avata": ("QUERY", "DJI Avata", "audio_i_video", ""),
 }
+
+# Проверка совпадения для QUERY (ADR-021): поиск Avito «протекает» (Supreme в выдаче Prada). Объявление засчитывается
+# запросу, только если в заголовке есть все токены хотя бы одной альтернативы (после нормализации: регистр, ё,
+# апострофы и точки убираются — Arc'teryx = arcteryx, C.P. Company = cp company). Ключ — имя запроса до « — ».
+QUERY_TERMS: dict[str, tuple[str, ...]] = {
+    "Stone Island": ("stone island", "stoneisland", "стон айленд", "стоник"),
+    "Rick Owens": ("rick owens", "рик оуэнс", "рик овенс", "drkshdw"),
+    "Chrome Hearts": ("chrome hearts", "хром хартс"),
+    "Prada": ("prada", "прада"),
+    "Miu Miu": ("miu miu", "miumiu", "миу миу"),
+    "Maison Margiela": ("margiela", "маржела", "марджела", "mm6"),
+    "Arcteryx": ("arcteryx", "arc teryx", "артерикс", "арктерикс"),
+    "Moncler": ("moncler", "монклер"),
+    "CP Company": ("cp company", "cpcompany", "си пи компани"),
+    "Acne Studios": ("acne studios", "acne", "акне"),
+    "Fear of God Essentials": ("essentials", "fear of god", "fog"),
+    "Represent": ("represent",),
+    "Balenciaga": ("balenciaga", "баленсиага"),
+    "Gucci": ("gucci", "гуччи"),
+    "Louis Vuitton": ("louis vuitton", "lv", "луи виттон"),
+    "DJI Mini": ("dji mini",),
+    "DJI Avata": ("dji avata",),
+}

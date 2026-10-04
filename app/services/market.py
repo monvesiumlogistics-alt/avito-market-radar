@@ -61,6 +61,7 @@ from app.services.market_logic import (
 )
 from app.services.panels import captcha_alert, captcha_passed
 from app.services.radar import build_radar
+from app.services.scoping import query_matcher
 from app.services.sweep import daily_due, format_sweep_summary, is_quiet, plan_depth, rate_per_hour
 
 log = logging.getLogger(__name__)
@@ -351,7 +352,8 @@ class MarketCrawler:
             since = (now - hist[0].at).total_seconds() / 3600 if hist else None
             if cur is None and not self._due(c.scope, since):
                 continue  # не по графику своей области
-            if cur is None and c.scope == "CORE" and is_quiet(rate, since, s):
+            # тихие — через день только у подтверждённых CORE; гипотезы копят историю ежедневно (ADR-021)
+            if cur is None and c.scope == "CORE" and c.scope_status == "confirmed" and is_quiet(rate, since, s):
                 self._quiet += 1
                 continue
             start = cur.pages + 1 if cur is not None else 1
@@ -826,7 +828,9 @@ class MarketCrawler:
         full = False
         stop, total, pages, seen, new, known = "depth_cap", None, 0, 0, 0, 0
         with self.session_factory() as db:
-            is_query = db.get(Category, cat_id).kind == "query"
+            cat = db.get(Category, cat_id)
+            is_query = cat.kind == "query"
+            matches = query_matcher(cat.name) if is_query else None  # поиск Avito «протекает» (ADR-021)
         if start_page > 1:  # продолжение прерванной категории: счётчики уже прочитанных страниц
             with self.session_factory() as db:
                 prev = db.get(ScanCategory, (self.run_id, cat_id))
@@ -842,7 +846,8 @@ class MarketCrawler:
                 total = parse_total_count(res.html)
             promo = promoted_ids(res.html)
             with self.session_factory() as db:
-                n, k = record_search(db, cat_id, cards, promo, now, query=is_query)
+                relevant = [c for c in cards if matches(c.title)] if matches else cards
+                n, k = record_search(db, cat_id, relevant, promo, now, query=is_query)
                 seen, new, known = seen + n + k, new + n, known + k
                 db.merge(self._scan_row(cat_id, now, pages, seen, new, known, total, last_age, "partial", False))
                 db.commit()
@@ -860,6 +865,8 @@ class MarketCrawler:
                     old = True  # дочитываем страницу до конца (m1)
                     continue
                 last_age = age
+                if matches and not matches(c.title):
+                    continue  # чужое объявление в выдаче запроса — не находка и не сигнал
                 if c.price and c.price >= s.min_price:  # локальная перепроверка: pmin Avito может игнорировать
                     found.setdefault(c.external_id, c)
             if old:

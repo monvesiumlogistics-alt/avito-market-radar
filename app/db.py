@@ -78,9 +78,9 @@ class Category(Base):
     last_vpd_max: Mapped[int | None]
     last_best_url: Mapped[str | None] = mapped_column(String(1000))
     last_best_title: Mapped[str | None] = mapped_column(String(200))
-    # область обхода (ADR-020, app/scope.py); новые строки — CORE, пока apply_scope не разметит при старте
+    # область обхода (ADR-020, app/scope.py); новая/неизвестная категория — OFF (не обходится), ADR-021
     kind: Mapped[str] = mapped_column(String(16), default="category")  # category | query (поисковый срез)
-    scope: Mapped[str] = mapped_column(String(16), default="CORE")  # CORE|WATCH|QUERY|EXPLORE|OFF|HARD_EXCLUDE
+    scope: Mapped[str] = mapped_column(String(16), default="OFF")  # CORE|WATCH|QUERY|EXPLORE|OFF|HARD_EXCLUDE
     scope_status: Mapped[str | None] = mapped_column(String(16))  # CORE: hypothesis | confirmed
     flags: Mapped[str | None] = mapped_column(String(100))  # LOGISTICS_CHECK,REGULATORY_CHECK,FAKE_RISK
     duplicate_of: Mapped[str | None] = mapped_column(String(300))  # ключ оригинала, если категория — дубль
@@ -139,7 +139,8 @@ class Ad(Base):
     __tablename__ = "ads"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)  # avito item id
-    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
+    # настоящая категория Avito; NULL — объявление пока видели только через поисковые запросы (ADR-021)
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"))
     title: Mapped[str] = mapped_column(String(500))
     model_key: Mapped[str | None] = mapped_column(String(200), index=True)
     price: Mapped[int | None]
@@ -153,9 +154,21 @@ class Ad(Base):
     first_seen_at: Mapped[datetime] = mapped_column(index=True)
     last_seen_at: Mapped[datetime]
     promoted_seen: Mapped[int] = mapped_column(default=0)
-    query_id: Mapped[int | None]  # срез, где видели; category_id — настоящая категория, как только увидим там (ADR-020)
     status: Mapped[str] = mapped_column(String(16), default="live")  # live | gone (маркеры снятия: ADR-010)
     status_at: Mapped[datetime | None]
+
+
+class AdQuerySighting(Base):
+    """Объявление найдено через поисковый запрос (QUERY_WATCH) и прошло проверку совпадения с запросом (ADR-021).
+    Одно объявление — сколько угодно запросов; каноническая категория — только в ads.category_id.
+    Без FK на ads: пересборка ads (миграция) не должна трогать эту таблицу."""
+
+    __tablename__ = "ad_query_sightings"
+
+    ad_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    query_category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), primary_key=True, index=True)
+    first_seen_at: Mapped[datetime]
+    last_seen_at: Mapped[datetime]
 
 
 class AdEvent(Base):
@@ -229,11 +242,10 @@ _ADDED_COLUMNS = (  # (таблица, колонка, тип) — конста�
     ("crawl_runs", "kind", "VARCHAR(16) NOT NULL DEFAULT 'report'"),
     ("scan_categories", "done", "BOOLEAN NOT NULL DEFAULT 1"),
     ("categories", "kind", "VARCHAR(16) NOT NULL DEFAULT 'category'"),
-    ("categories", "scope", "VARCHAR(16) NOT NULL DEFAULT 'CORE'"),
+    ("categories", "scope", "VARCHAR(16) NOT NULL DEFAULT 'OFF'"),
     ("categories", "scope_status", "VARCHAR(16)"),
     ("categories", "flags", "VARCHAR(100)"),
     ("categories", "duplicate_of", "VARCHAR(300)"),
-    ("ads", "query_id", "INTEGER"),
 )
 
 
@@ -246,7 +258,36 @@ def init_db(url: str) -> sessionmaker:
         if column not in {c["name"] for c in inspect(engine).get_columns(table)}:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+    if url.startswith("sqlite"):
+        _migrate_ads(engine)
     return sessionmaker(engine, expire_on_commit=False)
+
+
+def _migrate_ads(engine) -> None:
+    """ADR-021: ads.category_id становится NULL-able, ads.query_id уходит в ad_query_sightings. SQLite не меняет
+    NOT NULL через ALTER — таблица пересобирается (индексы старой удаляются, данные копируются). Идемпотентно."""
+    cols = {c["name"]: c for c in inspect(engine).get_columns("ads")}
+    if cols["category_id"]["nullable"] and "query_id" not in cols:
+        return
+    table = Base.metadata.tables["ads"]
+    keep = ", ".join(c.name for c in table.columns if c.name in cols)
+    with engine.begin() as conn:
+        if "query_id" in cols:
+            conn.execute(
+                text(
+                    "INSERT OR IGNORE INTO ad_query_sightings (ad_id, query_category_id, first_seen_at, last_seen_at)"
+                    " SELECT id, query_id, first_seen_at, last_seen_at FROM ads WHERE query_id IS NOT NULL"
+                )
+            )
+        indexes = conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='ads' AND sql IS NOT NULL")
+        ).scalars()
+        for name in list(indexes):
+            conn.execute(text(f'DROP INDEX "{name}"'))
+        conn.execute(text("ALTER TABLE ads RENAME TO ads_old"))
+        table.create(conn)
+        conn.execute(text(f"INSERT INTO ads ({keep}) SELECT {keep} FROM ads_old"))
+        conn.execute(text("DROP TABLE ads_old"))
 
 
 def sync_default_rule(session_factory: sessionmaker, s: Settings) -> WatchRule:

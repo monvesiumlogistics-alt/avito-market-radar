@@ -4,8 +4,10 @@
 from datetime import datetime, timedelta
 from types import SimpleNamespace as NS
 
+from sqlalchemy import select
+
 from app.config import Settings
-from app.db import CrawlRun, ScanCategory
+from app.db import Category, CrawlRun, ScanCategory
 from app.providers.base import ProviderBlocked
 from app.services.sweep import daily_due, format_sweep_summary, is_quiet, plan_depth, rate_per_hour
 from tests.test_handlers import make, send
@@ -135,6 +137,9 @@ async def test_sweep_has_own_budget(tmp_path):
 
 async def test_quiet_category_skipped_next_day(tmp_path):
     t = life(tmp_path, {"A": [900]})
+    with t.sf() as db:  # тихие пропускаются только у подтверждённых CORE (ADR-021)
+        db.scalars(select(Category)).one().scope_status = "confirmed"
+        db.commit()
     t.crawler.start("sweep")
     await t.crawler._task  # 1 объявление за 7 дней — тихая
     t.now[0] += timedelta(hours=20)

@@ -1,7 +1,9 @@
 """Применение области обхода (app/scope.py) к БД и расчёт ожидаемых загрузок выдачи (ADR-020)."""
 
 import logging
+import re
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 from urllib.parse import urlsplit
 
@@ -9,9 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
-from app.db import Category
+from app.db import Ad, AdQuerySighting, Category
 from app.providers.avito_parser import BASE_URL
-from app.scope import EXTRA_QUERIES, SCOPE
+from app.scope import EXTRA_QUERIES, QUERY_TERMS, SCOPE
 
 log = logging.getLogger(__name__)
 
@@ -22,6 +24,17 @@ def key_of(url: str) -> str:
     """Ключ категории: путь (+ запрос) без домена."""
     parts = urlsplit(url)
     return parts.path + (f"?{parts.query}" if parts.query else "")
+
+
+def _tokens(text: str) -> set[str]:
+    t = re.sub(r"['’`´.]", "", text.lower().replace("ё", "е"))
+    return set(re.findall(r"[a-zа-я0-9]+", t))
+
+
+def query_matcher(query_name: str) -> Callable[[str], bool]:
+    """Совпадает ли заголовок с запросом QUERY_WATCH. Нет правил для запроса — ничего не совпадает (fail closed)."""
+    alternatives = [_tokens(a) for a in QUERY_TERMS.get(query_name.split(" — ")[0], ())]
+    return lambda title: any(alt <= _tokens(title) for alt in alternatives)
 
 
 def apply_scope(session_factory: sessionmaker, now: datetime) -> dict:
@@ -49,11 +62,23 @@ def apply_scope(session_factory: sessionmaker, now: datetime) -> dict:
             cat.kind = "query" if "?q=" in key else "category"
             if scope == "CORE" and not cat.scope_status:
                 cat.scope_status = "hypothesis"  # CORE_CONFIRMED — по данным (Product Hunter)
+        db.flush()
+        _release_query_owned(db)
         db.commit()
         counts = Counter(c.scope for c in cats.values())
     if unknown:
         log.warning("[SCOPE] нет в app/scope.py, не обходятся (OFF): %s", ", ".join(unknown))
     return {"counts": dict(counts), "unknown": unknown, "created": created}
+
+
+def _release_query_owned(db) -> None:
+    """ADR-021: объявления, которые раньше «принадлежали» запросу (category_id = запрос), → sighting + category NULL."""
+    query_ids = {c.id for c in db.scalars(select(Category).where(Category.kind == "query"))}
+    for ad in db.scalars(select(Ad).where(Ad.category_id.in_(query_ids))):
+        if db.get(AdQuerySighting, (ad.id, ad.category_id)) is None:
+            db.add(AdQuerySighting(ad_id=ad.id, query_category_id=ad.category_id, first_seen_at=ad.first_seen_at,
+                                   last_seen_at=ad.last_seen_at))  # fmt: skip
+        ad.category_id = None
 
 
 def expected_search_loads(counts: dict[str, int], s: Settings, core_pages: float = CORE_PAGES_PER_DAY) -> dict:

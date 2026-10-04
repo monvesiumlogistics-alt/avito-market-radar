@@ -107,7 +107,9 @@ def setup(tmp_path, pages: dict, seed: bool = True, **settings):
     settings = FAST | settings
     s = Settings(_env_file=None, **settings)
     with sf() as db:
-        cat = Category(section="muzykalnye_instrumenty", name="Аккордеоны", url=CAT_URL, discovered_at=NOW)
+        cat = Category(
+            section="muzykalnye_instrumenty", name="Аккордеоны", url=CAT_URL, discovered_at=NOW, scope="CORE"
+        )
         run = CrawlRun(started_at=NOW)
         db.add_all([cat, run] if seed else [run])
         db.commit()
@@ -474,7 +476,7 @@ def life(tmp_path, cats: dict[str, list[int]], gate=None, **settings):
         for sec, views in cats.items():
             for n, v in enumerate(views, 1):
                 url = f"https://www.avito.ru/all/{sec}/c{n}-H"
-                db.add(Category(section=sec, name=f"{sec} {n}", url=url, discovered_at=NOW))
+                db.add(Category(section=sec, name=f"{sec} {n}", url=url, discovered_at=NOW, scope="CORE"))
                 cid = f"{sec}{n}"
                 pages[f"{url}?s=104&pmin=10000"] = search_html((cid, f"Item {sec} {n}", 20000, "1 день назад"))
                 pages[card_url(cid)] = item_html(v)
