@@ -100,7 +100,8 @@ async def test_deep_run_budget_buckets_no_seller_profiles(tmp_path):
     obs = rows(t, CardObs)
     buckets = {o.bucket for o in obs}
     assert buckets <= {"baseline", "candidate", "followup"} and "baseline" in buckets and "candidate" in buckets
-    assert "🔬 Выборочные карточки" in t.notifier.sent[-1]
+    assert any("🔬 Выборочные карточки" in x for x in t.notifier.sent)
+    assert "🔥 Что реально стоит исследовать" in t.notifier.sent[-1] and "gopro m1" in t.notifier.sent[-1]
 
 
 def test_phase4_scripts_plan_and_report_import_no_browser():

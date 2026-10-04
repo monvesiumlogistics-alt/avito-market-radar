@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
 from aiogram.types import Chat, Message, ReplyKeyboardMarkup, Update, User
 
-from app.telegram.handlers import REPORT_BUTTON, STOP_BUTTON, build_router
+from app.telegram.handlers import DEEP_BUTTON, REPORT_BUTTON, STOP_BUTTON, build_router
 
 ADMIN = 777
 
@@ -71,7 +71,7 @@ async def test_start_buttons():
     await send(t, "/start")
     (req,) = t.session.requests
     assert isinstance(req.reply_markup, ReplyKeyboardMarkup)
-    assert [b.text for row in req.reply_markup.keyboard for b in row] == [REPORT_BUTTON, STOP_BUTTON]
+    assert [b.text for row in req.reply_markup.keyboard for b in row] == [REPORT_BUTTON, DEEP_BUTTON, STOP_BUTTON]
     assert "/report" in req.text and "/stop" in req.text
 
 
@@ -88,3 +88,10 @@ async def test_foreign_chat_ignored():
     for text in ("/report", REPORT_BUTTON, "/stop", STOP_BUTTON, "/start"):
         await send(t, text, chat_id=999)
     assert t.crawler.calls == [] and t.session.requests == []  # AC-6.2: чужим бот молчит
+
+
+async def test_deep_button_and_command_start_deep_run():
+    t = make()
+    await send(t, DEEP_BUTTON)
+    await send(t, "/deep")
+    assert t.crawler.calls == ["deep", "deep"]

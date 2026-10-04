@@ -572,9 +572,14 @@ class MarketCrawler:
             return
         if self.kind == "deep":
             counts = ", ".join(f"{k} {v}" for k, v in self.deep_counts.items()) or "0"
-            note = STATUS_NOTES.get(status, "")
-            await self._send_many([f"<b>🔬 Выборочные карточки</b>\nОткрыто: {counts} · загрузок {self.loads}"
-                                   f"\n{self.traffic.summary()}" + (f"\n{note}" if note else "")])  # fmt: skip
+            note = STATUS_NOTES.get(status, "").replace("/report", "кнопке «🔬 Проверить кандидатов»")
+            head = (f"<b>🔬 Выборочные карточки</b>\nОткрыто: {counts} · загрузок {self.loads}"
+                    f"\n{self.traffic.summary()}" + (f"\n{note}" if note else ""))  # fmt: skip
+            from app.services.hunter_report import hunter_texts
+
+            with self.session_factory() as db:
+                texts = hunter_texts(db, self.clock())
+            await self._send_many([head, *texts])
             return
         s = self.settings
         with self.session_factory() as db:

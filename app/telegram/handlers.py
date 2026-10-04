@@ -24,8 +24,13 @@ def _hm(dt: datetime | None) -> str:
 
 REPORT_BUTTON = "🔎 Проверить рынок"
 STOP_BUTTON = "⏹ Стоп"
+DEEP_BUTTON = "🔬 Проверить кандидатов"
 KEYBOARD = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text=REPORT_BUTTON), KeyboardButton(text=STOP_BUTTON)]], resize_keyboard=True
+    keyboard=[
+        [KeyboardButton(text=REPORT_BUTTON), KeyboardButton(text=DEEP_BUTTON)],
+        [KeyboardButton(text=STOP_BUTTON)],
+    ],
+    resize_keyboard=True,
 )
 
 
@@ -51,6 +56,12 @@ def build_router(
     @router.message(F.text == REPORT_BUTTON)
     async def report(msg: Message) -> None:
         await msg.answer(crawler.start())
+
+    @router.message(Command("deep"))
+    @router.message(F.text == DEEP_BUTTON)
+    async def deep(msg: Message) -> None:
+        """Phase 4 по кнопке: выборочные карточки кандидатов (DEEP_BUDGET загрузок), итог — в конце прогона."""
+        await msg.answer(crawler.start("deep"))
 
     @router.message(Command("sweep"))
     async def sweep(msg: Message) -> None:
