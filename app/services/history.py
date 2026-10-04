@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.db import Ad, AdEvent, AdQuerySighting, CardObs, Category
 from app.models import Listing
 from app.services.market_logic import model_key
-from app.services.product_store import assign_product
+from app.services.product_store import assign_product, touch_product
 from app.services.products import domain_of
 
 POSTED_RANK = {None: 0, "search": 1, "card": 2, "seller": 3}  # дата из профиля точнее карточки, карточка — выдачи
@@ -65,6 +65,7 @@ def record_search(
             known += not is_promo
         elif ad.category_id is None:
             ad.category_id = category_id  # до сих пор видели только через запросы: теперь есть категория
+            assign_product(db, ad, domain, now)  # товар — заново, по домену настоящей категории (ADR-023)
             new += not is_promo
         else:
             known += not is_promo
@@ -82,6 +83,7 @@ def record_search(
             ad.status, ad.status_at = "live", now
         if ad.shop is None and c.seller_name:
             ad.shop = c.seller_name
+        touch_product(db, ad)  # товар был на рынке сейчас
     return new, known
 
 

@@ -23,22 +23,22 @@ from app.services.products import (
 CONF_RANK = {"UNKNOWN": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3}
 
 
-def _product(db: Session, ident: ProductIdentity, title: str, now: datetime, cache: dict) -> Product:
+def _product(db: Session, ident: ProductIdentity, ad: Ad, now: datetime, cache: dict) -> Product:
     p = cache.get(ident.canonical_key) or db.scalar(
         select(Product).where(Product.canonical_key == ident.canonical_key)
     )
     if p is None:
         p = Product(
             canonical_key=ident.canonical_key, brand=ident.brand, model=ident.model, display_name=ident.display_name,
-            confidence=ident.confidence, first_seen_at=now, last_seen_at=now,
-            extractor_version=PRODUCT_EXTRACTOR_VERSION, created_from=title[:500],
+            confidence=ident.confidence, first_seen_at=ad.first_seen_at or now, last_seen_at=ad.last_seen_at or now,
+            extractor_version=PRODUCT_EXTRACTOR_VERSION, created_from=ad.title[:500],
         )  # fmt: skip
         db.add(p)
         db.flush()
     elif CONF_RANK[ident.confidence] > CONF_RANK[p.confidence]:
         p.confidence = ident.confidence
-    p.last_seen_at = max(p.last_seen_at, now)
-    p.first_seen_at = min(p.first_seen_at, now)
+    p.first_seen_at = min(p.first_seen_at, ad.first_seen_at or now)  # = MIN по объявлениям товара
+    p.last_seen_at = max(p.last_seen_at, ad.last_seen_at or now)  # = MAX: когда товар последний раз был на рынке
     cache[ident.canonical_key] = p
     return p
 
@@ -48,7 +48,7 @@ def assign_product(db: Session, ad: Ad, domain: str, now: datetime, cache: dict 
     (бренд остаётся для диагностики). Смена товара пишется в product_assignments."""
     cache = {} if cache is None else cache
     ident = identify(ad.title, domain)
-    product = _product(db, ident, ad.title, ad.first_seen_at or now, cache) if ident.clusterable else None
+    product = _product(db, ident, ad, now, cache) if ident.clusterable else None
     new_id = product.id if product else None
     if new_id != ad.product_id:  # смена товара (в т.ч. первое назначение) — в журнал
         db.add(ProductAssignment(ad_id=ad.id, product_id=new_id, confidence=ident.confidence, method="extractor",
@@ -57,6 +57,14 @@ def assign_product(db: Session, ad: Ad, domain: str, now: datetime, cache: dict 
     ad.identity_brand, ad.identity_variant = ident.brand, (ident.variant or None) and ident.variant[:200]
     ad.extractor_version = PRODUCT_EXTRACTOR_VERSION
     return ident
+
+
+def touch_product(db: Session, ad: Ad) -> None:
+    """Объявление снова видели: last_seen товара = MAX(last_seen его объявлений)."""
+    if ad.product_id:
+        p = db.get(Product, ad.product_id)
+        if p is not None and ad.last_seen_at and ad.last_seen_at > p.last_seen_at:
+            p.last_seen_at = ad.last_seen_at
 
 
 def ad_domains(db: Session) -> dict[str, str]:
@@ -79,8 +87,20 @@ def rebuild(db: Session, now: datetime) -> dict:
         assign_product(db, ad, domains.get(ad.id, "generic"), now, cache)
         changed += before != ad.product_id
     db.flush()
-    used = set(db.scalars(select(Ad.product_id).where(Ad.product_id.is_not(None))))
-    orphans = [p for p in db.scalars(select(Product)) if p.id not in used]
+    seen = {
+        pid: (lo, hi)
+        for pid, lo, hi in db.execute(
+            select(Ad.product_id, func.min(Ad.first_seen_at), func.max(Ad.last_seen_at))
+            .where(Ad.product_id.is_not(None))
+            .group_by(Ad.product_id)
+        )
+    }  # first/last seen товара — точно из его объявлений (не накопленные значения прошлых версий)
+    orphans = []
+    for p in db.scalars(select(Product)):
+        if p.id in seen:
+            p.first_seen_at, p.last_seen_at = seen[p.id]
+        else:
+            orphans.append(p)
     for p in orphans:
         db.delete(p)
     db.commit()
@@ -101,9 +121,11 @@ def diagnostics(db: Session, scopes: tuple[str, ...] = ("CORE", "WATCH", "QUERY"
             by_product[a.product_id].append(a)
     products = {p.id: p for p in db.scalars(select(Product).where(Product.id.in_(list(by_product))))}
     sizes = sorted(((len(v), pid) for pid, v in by_product.items()), reverse=True)
+    domains = ad_domains(db)
     suspicious = []
     for n, pid in sizes:
-        flags = _suspicious(by_product[pid])
+        cluster = by_product[pid]
+        flags = _suspicious(cluster, products[pid].canonical_key, domains.get(cluster[0].id, "generic"))
         if flags:
             suspicious.append((products[pid].display_name, n, flags))
     total = len(ads) or 1
@@ -120,14 +142,13 @@ def diagnostics(db: Session, scopes: tuple[str, ...] = ("CORE", "WATCH", "QUERY"
     }
 
 
-def _key_parts(ads: list[Ad]) -> set[str]:
-    """Части ключа модели кластера и их склейки по две (x16 = x + 16)."""
-    key = identify(ads[0].title).canonical_key or ""
+def _key_parts(key: str) -> set[str]:
+    """Части сохранённого ключа товара и их склейки по две (x16 = x + 16)."""
     parts = key.split("|")[1].split("-") if "|" in key else []
     return set(parts) | {a + b for a, b in zip(parts, parts[1:], strict=False)}
 
 
-def _suspicious(ads: list[Ad]) -> list[str]:
+def _suspicious(ads: list[Ad], key: str, domain: str) -> list[str]:
     """Признаки ложного слияния: огромный разброс цены; разные коды с цифрами в заголовках одного товара
     (кроме характеристик) — возможно, под одним ключом несколько моделей."""
     flags = []
@@ -135,8 +156,8 @@ def _suspicious(ads: list[Ad]) -> list[str]:
         codes: Counter = Counter()
         for a in ads:
             toks = normalize(a.title)
-            codes.update({t for t in toks if any(c.isdigit() for c in t) and not _is_variant(t, "laptop")})
-        key_parts = _key_parts(ads)
+            codes.update({t for t in toks if any(c.isdigit() for c in t) and not _is_variant(t, domain)})
+        key_parts = _key_parts(key)
         common = {t for t, n in codes.items() if n == len(ads)}  # код самой модели есть во всех
         odd = [t for t, n in codes.items() if t not in common and n >= 2 and t not in key_parts
                and not (t.isdigit() and len(t) <= 2)]  # «x 16» vs «x16», «Ryzen 5» — не другие модели  # fmt: skip

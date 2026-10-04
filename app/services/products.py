@@ -27,11 +27,14 @@ class Brand:
     families: tuple[str, ...] = ()
     implied: dict = field(default_factory=dict)  # alias -> серия, которую он подразумевает (iphone -> Apple iphone)
     synonyms: dict = field(default_factory=dict)  # токен -> замена в модели ("" — выкинуть): honor «mb» = magicbook
+    domains: tuple[str, ...] = ()  # только для двусмысленных имён (Trek, Focus, Supreme…): где бренд разрешён
 
 
-def B(name, aliases, families=(), implied=None, synonyms=None):  # noqa: N802 — короткий конструктор для реестра
-    return Brand(name, tuple(aliases), tuple(families), implied or {}, synonyms or {})
+def B(name, aliases, families=(), implied=None, synonyms=None, domains=()):  # noqa: N802 — конструктор реестра
+    return Brand(name, tuple(aliases), tuple(families), implied or {}, synonyms or {}, tuple(domains))
 
+
+BIKE, FASHION = ("bike", "ebike"), ("fashion",)  # домены двусмысленных имён (Trek, Focus, Supreme, LV…)
 
 # Реестр брендов: только то, что встречается в данных CORE/WATCH/QUERY или прямо названо в scope. Расширяется руками.
 BRANDS: tuple[Brand, ...] = (
@@ -62,7 +65,7 @@ BRANDS: tuple[Brand, ...] = (
     B("Leica", ("leica", "лейка"), ("q", "m", "d-lux", "monovid", "trinovid", "noctivid")),
     B("Olympus", ("olympus", "olimpus"), ("om", "pen", "mju", "e")),
     B("Panasonic", ("panasonic", "lumix"), ("gh", "g", "s", "lx", "fz", "tz")),
-    B("Sigma", ("sigma",), ("fp", "art", "contemporary")),
+    B("Sigma", ("sigma",), ("fp", "art", "contemporary"), domains=('photo',)),
     B("Contax", ("contax",), ("t2", "t3", "g1", "g2")),
     B("Pentax", ("pentax",), ("k", "kp", "mz", "espio", "papilio")),
     B("GoPro", ("gopro", "go pro", "гопро"), ("hero", "max", "mission", "=fusion")),
@@ -118,33 +121,35 @@ BRANDS: tuple[Brand, ...] = (
     B("Hualu", ("hualu", "хуалу"), ()),
     B("Wenbox", ("wenbox",), ()),
     B("Fiido", ("fiido",), ()),
-    B("ADO", ("ado",), ("a", "air")),
+    B("ADO", ("ado",), ("a", "air"), domains=('ebike', 'bike')),
     B("Engwe", ("engwe",), ()),
     B("Ninebot", ("ninebot", "segway", "segway ninebot"), ("max", "kickscooter", "f", "e", "p")),
     B("Minako", ("minako",), ()),
     B("Eltreco", ("eltreco",), ()),
     # велосипеды и компоненты
     B("Specialized", ("specialized", "speciliazed", "specialised"), ("tarmac", "roubaix", "allez", "aethos", "venge",
-      "diverge", "crux", "epic", "stumpjumper", "chisel", "rockhopper", "s-works")),  # fmt: skip
-    B("Trek", ("trek",), ("madone", "emonda", "domane", "checkpoint", "fuel", "marlin", "procaliber", "supercaliber")),
-    B("Giant", ("giant",), ("tcr", "defy", "propel", "revolt", "talon", "xtc", "trance", "anthem")),
+      "diverge", "crux", "epic", "stumpjumper", "chisel", "rockhopper", "s-works"), domains=BIKE),  # fmt: skip
+    B("Trek", ("trek",), ("madone", "emonda", "domane", "checkpoint", "fuel", "marlin", "procaliber", "supercaliber"),
+      domains=BIKE),
+    B("Giant", ("giant",), ("tcr", "defy", "propel", "revolt", "talon", "xtc", "trance", "anthem"), domains=BIKE),
     B("Cannondale", ("cannondale",), ("supersix", "caad", "synapse", "topstone", "scalpel", "trail", "systemsix")),
-    B("Canyon", ("canyon",), ("aeroad", "ultimate", "endurace", "grail", "grizl", "lux", "spectral", "neuron")),
-    B("Cube", ("cube",), ("attain", "agree", "litening", "nuroad", "reaction", "stereo", "aim", "ams")),
-    B("Merida", ("merida",), ("scultura", "reacto", "big nine", "big seven", "ninety-six", "one-twenty")),
+    B("Canyon", ("canyon",), ("aeroad", "ultimate", "endurace", "grail", "grizl", "lux", "spectral", "neuron"),
+      domains=BIKE),
+    B("Cube", ("cube",), ("attain", "agree", "litening", "nuroad", "reaction", "stereo", "aim", "ams"), domains=BIKE),
+    B("Merida", ("merida",), ("scultura", "reacto", "big nine", "big seven", "ninety-six", "one-twenty"), domains=BIKE),
     B("Pinarello", ("pinarello",), ("dogma", "prince", "paris", "=gan", "=gan disc", "f")),
     B("Bianchi", ("bianchi",), ("oltre", "specialissima", "=infinito", "=infinito cv", "sprint", "via nirone")),
     B("BMC", ("bmc",), ("teammachine", "roadmachine", "timemachine", "fourstroke", "urs")),
     B("Cervelo", ("cervelo",), ("=soloist", "s", "r", "caledonia", "aspero", "p")),
-    B("Scott", ("scott",), ("addict", "foil", "speedster", "spark", "scale", "aspect")),
+    B("Scott", ("scott",), ("addict", "foil", "speedster", "spark", "scale", "aspect"), domains=BIKE),
     B("Orbea", ("orbea",), ("orca", "avant", "terra", "oiz", "alma", "occam")),
-    B("Felt", ("felt",), ("fr", "ar", "broam", "vr")),
-    B("Factor", ("factor",), ("ostro", "=slick", "o2", "one")),
+    B("Felt", ("felt",), ("fr", "ar", "broam", "vr"), domains=BIKE),
+    B("Factor", ("factor",), ("ostro", "=slick", "o2", "one"), domains=BIKE),
     B("Colnago", ("colnago",), ("v", "c", "g3")),
-    B("Polygon", ("polygon",), ("strattos", "siskiu", "xtrada", "bend")),
-    B("KTM", ("ktm",), ("macina", "revelator", "myroon")),
-    B("Focus", ("focus",), ("izalco", "izalco max", "paralane", "jam", "raven", "atlas")),
-    B("Look", ("look",), ()),
+    B("Polygon", ("polygon",), ("strattos", "siskiu", "xtrada", "bend"), domains=BIKE),
+    B("KTM", ("ktm",), ("macina", "revelator", "myroon"), domains=BIKE),
+    B("Focus", ("focus",), ("izalco", "izalco max", "paralane", "jam", "raven", "atlas"), domains=BIKE),
+    B("Look", ("look",), (), domains=BIKE),
     B("Shimano", ("shimano",), ("105", "ultegra", "dura-ace", "dura ace", "grx", "deore", "xt", "slx", "xtr")),
     B("SRAM", ("sram",), ("red", "force", "rival", "apex", "gx", "x01", "xx1")),
     B("Elitewheels", ("elitewheels", "elite wheels"), ("drive", "edge")),
@@ -181,7 +186,7 @@ BRANDS: tuple[Brand, ...] = (
     B("Vixen", ("vixen",), ("vmc",)),
     B("iRay", ("iray",), ("rico", "zoom", "tube", "bolt")),
     B("HikMicro", ("hikmicro", "hik micro"), ("lynx", "thunder", "gryphon", "falcon", "condor")),
-    B("Pulsar", ("pulsar",), ("helion", "axion", "thermion", "merger")),
+    B("Pulsar", ("pulsar",), ("helion", "axion", "thermion", "merger"), domains=('optics',)),
     # Hi-Fi
     B("Sennheiser", ("sennheiser",), ("hd", "ie", "momentum")),
     B("Moondrop", ("moondrop",), ("blessing", "aria", "kato", "variations")),
@@ -205,15 +210,16 @@ BRANDS: tuple[Brand, ...] = (
        "=cerium lt")),  # fmt: skip
     B("Moncler", ("moncler", "монклер"), ("=maya", "=montclar", "=cardere")),
     B("C.P. Company", ("cp company", "c p company", "cpcompany", "си пи компани")),
-    B("Acne Studios", ("acne studios", "acne", "акне"), ()),
-    B("Fear of God", ("fear of god", "essentials", "fog"), ()),
-    B("Represent", ("represent",), ()),
+    B("Acne Studios", ("acne studios", "acne", "акне"), (), domains=FASHION),
+    B("Fear of God", ("fear of god", "essentials", "fog"), (), domains=FASHION),
+    B("Represent", ("represent",), (), domains=FASHION),
     B("Balenciaga", ("balenciaga", "баленсиага"), ("=triple s", "=track", "=defender", "=speed", "=runner")),
     B("Gucci", ("gucci", "гуччи"), ("=ace", "=rhyton", "=jackie", "=dionysus", "=horsebit")),
-    B("Louis Vuitton", ("louis vuitton", "луи виттон", "lv"), ("=keepall", "=neverfull", "=speedy", "=trainer")),
-    B("Supreme", ("supreme",)),
+    B("Louis Vuitton", ("louis vuitton", "луи виттон", "lv"), ("=keepall", "=neverfull", "=speedy", "=trainer"),
+      domains=FASHION),
+    B("Supreme", ("supreme",), domains=FASHION),
     B("Nike", ("nike", "найк"), ("air force", "air max", "air jordan", "jordan", "dunk", "=dunk low", "=sb dunk")),
-    B("New Balance", ("new balance", "nb"), ("=990", "=2002r", "=550", "=9060", "=530", "=1906r")),
+    B("New Balance", ("new balance", "nb"), ("=990", "=2002r", "=550", "=9060", "=530", "=1906r"), domains=FASHION),
 )
 
 # Код модели без названия бренда, однозначно указывающий бренд (DDJ-FLX4 → Pioneer; RTX 4090 → NVIDIA).
@@ -261,14 +267,24 @@ class ProductIdentity:
         return self.confidence in CLUSTERABLE and self.canonical_key is not None
 
 
+DOMAIN_MARKERS = (
+    ("noutbuki", "laptop"), ("komplektuyuschie", "pc"), ("velosipedy", "bike"), ("elektrovelosipedy", "ebike"),
+    ("samokaty", "ebike"), ("odezhda", "fashion"), ("obuv", "fashion"), ("sumki", "fashion"), ("binokli", "optics"),
+    ("ohota", "optics"), ("mobile", "phone"), ("iphone", "phone"), ("planshety", "phone"), ("chasy", "watch"),
+    ("fototehnika", "photo"), ("cifrovye_kamery", "photo"), ("plenocnye_kamery", "photo"), ("eksn_kamery", "action"),
+    ("muzykalnye_instrumenty", "music"), ("igrovye_pristavki", "console"), ("dzhoystiki", "console"),
+    ("zapchasti_i_aksessuary", "auto"), ("detskie_kolyaski", "stroller"), ("naushniki", "hifi"),
+    ("usiliteli", "hifi"),
+)  # fmt: skip  # порядок важен: elektrovelosipedy раньше velosipedy не нужен — проверяется первым совпавшим ниже
+
+
 def domain_of(category_url: str | None) -> str:
-    """Тип рынка по адресу категории — для правил разбора (у ноутбука RTX — характеристика, у видеокарты — модель)."""
+    """Тип рынка по адресу категории — для правил разбора (у ноутбука RTX — характеристика, у видеокарты — модель)
+    и для двусмысленных брендов (Trek — велосипед, а не «Pro Trek» у часов)."""
     u = category_url or ""
-    for marker, domain in (("noutbuki", "laptop"), ("komplektuyuschie", "pc"), ("velosipedy/zapchasti", "bike"),
-                           ("shosseinye", "bike"), ("gornye", "bike"), ("elektrovelosipedy", "ebike"),
-                           ("samokaty", "ebike"), ("odezhda", "fashion"), ("obuv", "fashion"), ("sumki", "fashion"),
-                           ("binokli", "optics"), ("ohota", "optics"), ("mobile", "phone"), ("iphone", "phone"),
-                           ("planshety", "phone"), ("chasy", "watch")):  # fmt: skip
+    if "elektrovelosipedy" in u:
+        return "ebike"
+    for marker, domain in DOMAIN_MARKERS:
         if marker in u:
             return domain
     return "generic"
@@ -343,6 +359,8 @@ def _find_brand(tokens: list[str], domain: str) -> tuple[Brand, int, int] | None
                 return _BY_NAME[PC_CODE_BRANDS[tok]], i, i
     for i, tok in enumerate(tokens):
         for alias, brand in _ALIASES:
+            if brand.domains and domain not in brand.domains:
+                continue  # «Pro Trek» у часов, «giant case» у ПК — не велосипедные бренды
             if tuple(tokens[i : i + len(alias)]) == alias:
                 return brand, i, i + len(alias)
         if tok.split("-")[0] in CODE_BRANDS:
