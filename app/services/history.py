@@ -23,9 +23,17 @@ def _event(db: Session, ad_id: str, at: datetime, kind: str, old, new) -> None:
 
 
 def record_search(
-    db: Session, category_id: int, cards: Sequence[Listing], promo: Iterable[str], now: datetime
+    db: Session,
+    category_id: int,
+    cards: Sequence[Listing],
+    promo: Iterable[str],
+    now: datetime,
+    query: bool = False,
 ) -> tuple[int, int]:
-    """Upsert объявлений со страницы выдачи. Возвращает (новых, уже известных) среди непромо-карточек."""
+    """Upsert объявлений со страницы выдачи. Возвращает (новых, уже известных) среди непромо-карточек.
+
+    query=True — выдача поискового среза (ADR-020): объявление запоминает срез (query_id), но настоящей категорией
+    становится та, где его увидят в обычной выдаче; для неё такое объявление считается новым."""
     promo = set(promo)
     have = {a.id: a for a in db.scalars(select(Ad).where(Ad.id.in_([c.external_id for c in cards])))}
     new = known = 0
@@ -38,12 +46,20 @@ def record_search(
                 price=c.price, url_path=urlsplit(c.url).path[:500], city=c.location, shop=c.seller_name,
                 image_url=c.image_url, posted_at=c.published_at, posted_src="search" if c.published_at else None,
                 first_seen_at=now, last_seen_at=now, promoted_seen=int(is_promo), status="live",
+                query_id=category_id if query else None,
             )  # fmt: skip
             db.add(ad)
             have[ad.id] = ad
             new += not is_promo
             continue
-        known += not is_promo
+        if query:
+            ad.query_id = ad.query_id or category_id
+            known += not is_promo
+        elif ad.query_id is not None and ad.category_id == ad.query_id:
+            ad.category_id = category_id  # до сих пор видели только в срезе: теперь у объявления есть категория
+            new += not is_promo
+        else:
+            known += not is_promo
         ad.last_seen_at = now
         ad.promoted_seen += is_promo
         if c.price is not None and c.price != ad.price:

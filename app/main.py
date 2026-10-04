@@ -18,6 +18,7 @@ from app.services.market import MarketCrawler
 from app.services.notifier import TelegramNotifier
 from app.services.panels import startup_text
 from app.services.scanner import Scanner
+from app.services.scoping import apply_scope
 from app.telegram.handlers import build_router
 
 
@@ -58,6 +59,8 @@ async def main() -> None:
 
     session_factory = init_db(settings.database_url)
     rule = sync_default_rule(session_factory, settings)
+    scope = apply_scope(session_factory, msk_now())  # область обхода из app/scope.py (ADR-020)
+    log.info("[SCOPE] %s", scope["counts"])
     if not rule.search_urls:
         log.warning("AVITO_SEARCH_URLS пуст: искать негде, добавь URL в .env")
 

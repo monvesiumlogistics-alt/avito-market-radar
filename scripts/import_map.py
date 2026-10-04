@@ -31,7 +31,7 @@ def import_map(session_factory: sessionmaker, path: Path, now: datetime | None =
         by_url = {c.url: c for c in db.scalars(select(Category))}
         for r in rows:
             url = BASE_URL + r["key"]
-            cat = by_url.get(url) or Category(url=url)
+            cat = by_url.get(url) or Category(url=url, scope="OFF")  # область — из app/scope.py при старте бота
             cat.section = r["key"].split("/")[2]  # /rossiya/<section>/<sub>-<hash>
             cat.name = r["name"][:200]
             cat.discovered_at = now

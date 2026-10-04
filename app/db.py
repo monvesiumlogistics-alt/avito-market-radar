@@ -78,6 +78,12 @@ class Category(Base):
     last_vpd_max: Mapped[int | None]
     last_best_url: Mapped[str | None] = mapped_column(String(1000))
     last_best_title: Mapped[str | None] = mapped_column(String(200))
+    # область обхода (ADR-020, app/scope.py); новые строки — CORE, пока apply_scope не разметит при старте
+    kind: Mapped[str] = mapped_column(String(16), default="category")  # category | query (поисковый срез)
+    scope: Mapped[str] = mapped_column(String(16), default="CORE")  # CORE|WATCH|QUERY|EXPLORE|OFF|HARD_EXCLUDE
+    scope_status: Mapped[str | None] = mapped_column(String(16))  # CORE: hypothesis | confirmed
+    flags: Mapped[str | None] = mapped_column(String(100))  # LOGISTICS_CHECK,REGULATORY_CHECK,FAKE_RISK
+    duplicate_of: Mapped[str | None] = mapped_column(String(300))  # ключ оригинала, если категория — дубль
 
 
 class CrawlRun(Base):
@@ -147,6 +153,7 @@ class Ad(Base):
     first_seen_at: Mapped[datetime] = mapped_column(index=True)
     last_seen_at: Mapped[datetime]
     promoted_seen: Mapped[int] = mapped_column(default=0)
+    query_id: Mapped[int | None]  # срез, где видели; category_id — настоящая категория, как только увидим там (ADR-020)
     status: Mapped[str] = mapped_column(String(16), default="live")  # live | gone (маркеры снятия: ADR-010)
     status_at: Mapped[datetime | None]
 
@@ -221,6 +228,12 @@ _ADDED_COLUMNS = (  # (таблица, колонка, тип) — конста�
     ("finds", "views_last", "INTEGER"),
     ("crawl_runs", "kind", "VARCHAR(16) NOT NULL DEFAULT 'report'"),
     ("scan_categories", "done", "BOOLEAN NOT NULL DEFAULT 1"),
+    ("categories", "kind", "VARCHAR(16) NOT NULL DEFAULT 'category'"),
+    ("categories", "scope", "VARCHAR(16) NOT NULL DEFAULT 'CORE'"),
+    ("categories", "scope_status", "VARCHAR(16)"),
+    ("categories", "flags", "VARCHAR(100)"),
+    ("categories", "duplicate_of", "VARCHAR(300)"),
+    ("ads", "query_id", "INTEGER"),
 )
 
 

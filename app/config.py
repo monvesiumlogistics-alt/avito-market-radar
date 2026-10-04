@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     slow_hours: float = 2  # ... на столько часов
     sweep_large_total: int = 20000  # категория больше — обход берёт только 1-ю страницу (выборка)
     sweep_large_per_day: int = 150  # новых в сутки больше — тоже выборка
+    # частота обхода по областям (ADR-020, app/scope.py): CORE — ежедневно, OFF/HARD_EXCLUDE — никогда
+    watch_every_hours: float = 44  # WATCH: ~раз в 2 дня, 1 страница
+    query_every_hours: float = 44  # брендовые/модельные запросы: ~раз в 2 дня, 1 страница
+    explore_every_days: float = 10  # EXPLORE: ротация
+    explore_per_run: int = 6  # и не больше стольких EXPLORE за обход
     page_delay_min: float = 2
     page_delay_max: float = 5
 

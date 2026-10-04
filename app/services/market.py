@@ -34,6 +34,7 @@ from app.providers.avito_parser import (
 )
 from app.providers.base import AvitoProvider, BrowserLost, ProviderBlocked
 from app.providers.traffic import AvitoTraffic, TrafficLimit
+from app.scope import ACTIVE
 from app.services.history import record_card, record_gone, record_search, update_ad
 from app.services.market_cmds import entries_for
 from app.services.market_logic import (
@@ -64,6 +65,7 @@ from app.services.sweep import daily_due, format_sweep_summary, is_quiet, plan_d
 
 log = logging.getLogger(__name__)
 
+REPORT_SCOPES = ("CORE", "WATCH", "QUERY")  # /report (карточки) — не по EXPLORE/OFF (ADR-020)
 RESUMABLE = ("running", "stopped", "blocked", "interrupted", "failed")  # budget/done: следующий прогон новый
 MAX_ERROR_STREAK = 3
 RECHECK_MIN_AGE = timedelta(days=2)  # перепроверяем находки возрастом 2-14 дней
@@ -347,12 +349,17 @@ class MarketCrawler:
             hist = past[c.id]
             rate = rate_per_hour(hist)
             since = (now - hist[0].at).total_seconds() / 3600 if hist else None
-            if cur is None and is_quiet(rate, since, s):
+            if cur is None and not self._due(c.scope, since):
+                continue  # не по графику своей области
+            if cur is None and c.scope == "CORE" and is_quiet(rate, since, s):
                 self._quiet += 1
                 continue
             start = cur.pages + 1 if cur is not None else 1
-            plan.append((math.inf if since is None else since, c, start, max(plan_depth(rate, since, s), start)))
+            depth = plan_depth(rate, since, s) if c.scope == "CORE" else 1  # не CORE — только 1-я страница
+            plan.append((math.inf if since is None else since, c, start, max(depth, start)))
         plan.sort(key=lambda p: -p[0])  # давно не были — первыми
+        explore = [p for p in plan if p[1].scope == "EXPLORE"][s.explore_per_run :]
+        plan = [p for p in plan if p not in explore]  # EXPLORE — не больше explore_per_run за обход
         streak = 0
         for _, cat, start, depth in plan:
             if self.stop_requested:
@@ -377,11 +384,21 @@ class MarketCrawler:
                     raise BreakerTripped from e
             await self._send_progress()
 
-    def _categories(self, db) -> list[Category]:
+    def _due(self, scope: str, since: float | None) -> bool:
+        """Пора ли обходить категорию области scope, если в последний раз были since часов назад."""
+        s = self.settings
+        every = {"WATCH": s.watch_every_hours, "QUERY": s.query_every_hours, "EXPLORE": s.explore_every_days * 24}
+        return since is None or since >= every.get(scope, 0)
+
+    def _categories(self, db, scopes: tuple[str, ...] | None = None) -> list[Category]:
+        """Категории текущего вида прогона: обход — все активные области, /report — CORE/WATCH/QUERY (ADR-020)."""
+        scopes = scopes or (ACTIVE if self.kind == "sweep" else REPORT_SCOPES)
         return list(
             db.scalars(
                 select(Category).where(
-                    Category.section.in_(split_csv(self.settings.report_sections)), Category.skipped.is_not(True)
+                    Category.section.in_(split_csv(self.settings.report_sections)),
+                    Category.skipped.is_not(True),
+                    Category.scope.in_(scopes),
                 )
             )
         )
@@ -754,7 +771,7 @@ class MarketCrawler:
             with self.session_factory() as db:
                 by_url = {c.url: c for c in db.scalars(select(Category).where(Category.section == section))}
                 for name, url in subs:
-                    cat = by_url.get(url) or Category(section=section, url=url)
+                    cat = by_url.get(url) or Category(section=section, url=url, scope="OFF")  # нет в scope.py
                     cat.name, cat.discovered_at = name, now
                     db.add(cat)
                 self._add_loads(db.get(CrawlRun, self.run_id))
@@ -808,6 +825,8 @@ class MarketCrawler:
         last_age: timedelta | None = None
         full = False
         stop, total, pages, seen, new, known = "depth_cap", None, 0, 0, 0, 0
+        with self.session_factory() as db:
+            is_query = db.get(Category, cat_id).kind == "query"
         if start_page > 1:  # продолжение прерванной категории: счётчики уже прочитанных страниц
             with self.session_factory() as db:
                 prev = db.get(ScanCategory, (self.run_id, cat_id))
@@ -823,7 +842,7 @@ class MarketCrawler:
                 total = parse_total_count(res.html)
             promo = promoted_ids(res.html)
             with self.session_factory() as db:
-                n, k = record_search(db, cat_id, cards, promo, now)
+                n, k = record_search(db, cat_id, cards, promo, now, query=is_query)
                 seen, new, known = seen + n + k, new + n, known + k
                 db.merge(self._scan_row(cat_id, now, pages, seen, new, known, total, last_age, "partial", False))
                 db.commit()
