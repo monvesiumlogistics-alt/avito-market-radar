@@ -64,11 +64,20 @@ async def main() -> None:
     if not rule.search_urls:
         log.warning("AVITO_SEARCH_URLS пуст: искать негде, добавь URL в .env")
 
-    bot = Bot(
-        settings.telegram_bot_token,
-        session=AiohttpSession(proxy=settings.telegram_proxy) if settings.telegram_proxy else None,
-        default=DefaultBotProperties(parse_mode="HTML"),
-    )
+    client = None
+    if settings.telegram_mtproxy:  # без VPN: Telegram через TgWsProxy по MTProto
+        from app.telegram import mtproto
+
+        client = mtproto.make_client(settings.telegram_api_id, settings.telegram_api_hash,
+                                     settings.telegram_mtproxy, "./data/tg_bot")  # fmt: skip
+        bot, mt_session = await mtproto.start(client, settings.telegram_bot_token)
+        log.info("[TG] MTProto через %s", settings.telegram_mtproxy.rsplit(":", 1)[0])
+    else:
+        bot = Bot(
+            settings.telegram_bot_token,
+            session=AiohttpSession(proxy=settings.telegram_proxy) if settings.telegram_proxy else None,
+            default=DefaultBotProperties(parse_mode="HTML"),
+        )
     notifier = TelegramNotifier(bot, settings.telegram_admin_chat_id)
     proxy = playwright_proxy(settings.avito_proxy)
     gate = BrowserGate()  # один профиль браузера на мониторинг и проверку рынка
@@ -107,10 +116,16 @@ async def main() -> None:
     every = settings.check_interval_minutes
     await notifier.send_text(startup_text(rule.name, every, rule.enabled, settings.premium_emoji))
     try:
-        await dp.start_polling(bot)
+        if client is not None:
+            mtproto.attach(client, mt_session, bot, dp)
+            await client.run_until_disconnected()
+        else:
+            await dp.start_polling(bot)
     finally:
         scheduler.shutdown(wait=False)
         await bot.session.close()
+        if client is not None:
+            await client.disconnect()
 
 
 if __name__ == "__main__":

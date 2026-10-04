@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_admin_chat_id: int = 0
     telegram_proxy: str = ""
+    # MTProto через локальный MTProxy (TgWsProxy) — работает без VPN; задано -> Bot API/telegram_proxy не используются
+    telegram_mtproxy: str = ""  # host:port:secret
+    telegram_api_id: int = 0
+    telegram_api_hash: str = ""
 
     check_interval_minutes: int = 60
     initial_scan_notify: bool = False
