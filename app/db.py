@@ -195,6 +195,34 @@ class ProductAssignment(Base):
     assigned_at: Mapped[datetime]
 
 
+class ProductCandidate(Base):
+    """Товар на радаре кандидатов (ADR-023): отдельно от product identity. Phase 3: NEW | ACTIVE | COOLED;
+    позже добавятся checking / listed / rejected (feedback) — схема их не ограничивает."""
+
+    __tablename__ = "product_candidates"
+
+    product_id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(16))
+    first_candidate_at: Mapped[datetime]
+    last_candidate_at: Mapped[datetime]
+    candidate_confidence: Mapped[str] = mapped_column(String(8))
+    reason_codes: Mapped[str] = mapped_column(String(200))  # «REPEATED,MULTI_CITY,…»
+    last_evaluated_at: Mapped[datetime]
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict)  # последний снимок метрик
+
+
+class CandidateLog(Base):
+    """Одна строка на товар в день, когда он был кандидатом: когда и почему появился, сколько держится."""
+
+    __tablename__ = "candidate_log"
+
+    product_id: Mapped[int] = mapped_column(primary_key=True)
+    day: Mapped[date] = mapped_column(primary_key=True)
+    reason_codes: Mapped[str] = mapped_column(String(200))
+    candidate_confidence: Mapped[str] = mapped_column(String(8))
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class AdQuerySighting(Base):
     """Объявление найдено через поисковый запрос (QUERY_WATCH) и прошло проверку совпадения с запросом (ADR-021).
     Одно объявление — сколько угодно запросов; каноническая категория — только в ads.category_id.

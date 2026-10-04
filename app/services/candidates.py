@@ -10,13 +10,13 @@ ATTENTION — Phase 4 (нужна база категории по карточ�
 
 import statistics
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db import Ad, AdQuerySighting, Category, Product, ScanCategory
+from app.db import Ad, AdQuerySighting, CandidateLog, Category, Product, ProductCandidate, ScanCategory
 
 ELIGIBLE_SCOPES = ("CORE", "WATCH", "QUERY", "EXPLORE")
 PRICE_FLOOR = 8000
@@ -195,12 +195,12 @@ def _down(level: str, steps: int = 1) -> str:
 
 def independence(m: Metrics) -> tuple[str, str]:
     """Насколько объявления похожи на разных продавцов. Продавец частника в выдаче неизвестен — только косвенно."""
+    if m.top_shop_share >= 0.7 and m.seller_data_coverage >= 0.5:  # проверяется первым: города не спасают
+        return "LOW", f"{int(m.top_shop_share * 100)}% объявлений у одного магазина"
+    if m.cities_14d <= 1 and m.days_spread_14d <= 1 and m.known_shops_14d <= 1:
+        return "LOW", "похоже на одну загрузку: один город, один день"
     if m.cities_14d >= 3 or m.known_shops_14d >= 3 or (m.cities_14d >= 2 and m.days_spread_14d >= 3):
         return "HIGH", f"{m.cities_14d} городов · {m.known_shops_14d} магазинов · {m.days_spread_14d} разных дней"
-    if (m.cities_14d <= 1 and m.days_spread_14d <= 1 and m.known_shops_14d <= 1) or (
-        m.top_shop_share >= 0.7 and m.seller_data_coverage >= 0.5
-    ):
-        return "LOW", "похоже на одну загрузку: один город/день или один магазин"
     return "MEDIUM", "несколько объявлений, продавцы известны не полностью"
 
 
@@ -302,3 +302,41 @@ def run(db: Session, now: datetime) -> dict:
     candidates.sort(key=priority)
     return {"history_days": round(hist, 1), "eligible_ads": len(rows), "products": len(by_product),
             "candidates": candidates, "rejects": rejects, "rejected": rejected}  # fmt: skip
+
+
+# --- хранение ---
+
+
+def snapshot(c: Candidate) -> dict:
+    d = asdict(c.metrics)
+    for k, v in d.items():
+        if isinstance(v, datetime):
+            d[k] = v.isoformat(timespec="minutes")
+    return d | {"independence": c.independence, "why": c.why}
+
+
+def persist(db: Session, candidates: list[Candidate], now: datetime) -> dict:
+    """NEW — впервые; ACTIVE — снова/дальше кандидат; COOLED — был кандидатом, сейчас нет. Лог — строка на день."""
+    rows = {r.product_id: r for r in db.scalars(select(ProductCandidate))}
+    counts = Counter()
+    current = set()
+    for c in candidates:
+        pid, codes, snap = c.metrics.product_id, ",".join(c.reasons), snapshot(c)
+        current.add(pid)
+        r = rows.get(pid)
+        if r is None:
+            r = ProductCandidate(product_id=pid, status="NEW", first_candidate_at=now)
+            db.add(r)
+        elif r.status == "COOLED" or (r.status == "NEW" and r.first_candidate_at.date() < now.date()):
+            r.status = "ACTIVE"
+        r.last_candidate_at, r.last_evaluated_at = now, now
+        r.candidate_confidence, r.reason_codes, r.metrics = c.confidence, codes, snap
+        db.merge(CandidateLog(product_id=pid, day=now.date(), reason_codes=codes, candidate_confidence=c.confidence,
+                              metrics=snap))  # fmt: skip
+        counts[r.status] += 1
+    for pid, r in rows.items():
+        if pid not in current and r.status != "COOLED":
+            r.status, r.last_evaluated_at = "COOLED", now
+            counts["COOLED"] += 1
+    db.commit()
+    return dict(counts)

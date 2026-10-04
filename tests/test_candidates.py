@@ -44,6 +44,14 @@ def test_one_shop_one_city_one_day_is_low_independence():
     assert low.confidence == "LOW" and high.confidence == "HIGH"
 
 
+def test_dominant_shop_is_low_even_across_cities():
+    """Реальный случай: Alienware 16 Area 51 — 3 магазина, 2 города, но 75% объявлений у одного."""
+    rows = [row(i, c, shop=s) for i, (c, s) in enumerate([("moskva", "A"), ("moskva", "A"), ("moskva", "A"),
+                                                         ("spb", "A"), ("moskva", "A"), ("moskva", "A"),
+                                                         ("spb", "B"), ("moskva", "C")])]  # fmt: skip
+    assert independence(metrics(rows)) == ("LOW", "75% объявлений у одного магазина")
+
+
 def test_promoted_listings_do_not_make_strong_signal():
     m = metrics([row(1), row(2, "spb", promoted=True), row(3, "kazan", promoted=True)])
     assert evaluate(m, 10, None) == (None, "mostly_promoted")
@@ -157,3 +165,36 @@ def test_scopes_low_identity_and_explore(tmp_path):
     with t.sf() as db:
         assert db.get(Ad, "8").product_id is None
 
+
+
+# --- хранение и отчёт ---
+
+
+def test_persist_lifecycle_new_active_cooled(tmp_path):
+    from app.db import CandidateLog, ProductCandidate
+    from app.services.candidates import persist
+
+    t, (cid,) = seeded(tmp_path, ["CORE"])
+    with t.sf() as db:
+        record_search(db, cid, [lst(i, "Doona X", c) for i, c in ((1, "moskva"), (2, "spb"), (3, "kazan"))],
+                      set(), NOW)  # fmt: skip
+        db.commit()
+        cands = run(db, NOW)["candidates"]
+        assert persist(db, cands, NOW) == {"NEW": 1}
+        assert persist(db, cands, NOW + D) == {"ACTIVE": 1}  # на следующий день снова кандидат
+        assert persist(db, [], NOW + 2 * D) == {"COOLED": 1}  # выпал
+        assert persist(db, cands, NOW + 3 * D) == {"ACTIVE": 1}  # вернулся
+        (r,) = db.scalars(select(ProductCandidate)).all()
+        assert (r.first_candidate_at, r.last_candidate_at) == (NOW, NOW + 3 * D)
+        assert "REPEATED" in r.reason_codes and r.metrics["listings_14d"] == 3
+        assert len(db.scalars(select(CandidateLog)).all()) == 3  # дни, когда был кандидатом
+
+
+def test_candidate_report_makes_no_network_requests():
+    import subprocess
+    import sys
+
+    banned = "('playwright', 'app.providers.avito_browser')"
+    code = f"import sys, scripts.product_candidates; print(any(m.startswith({banned}) for m in sys.modules))"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "False"
