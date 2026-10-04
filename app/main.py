@@ -96,6 +96,9 @@ async def main() -> None:
     crawler.mark_interrupted()  # прогон, оборванный перезапуском бота, можно продолжить по /report
 
     scheduler = build_scheduler(scanner, crawler, settings.daily_sweep_at)
+    # недоставленное без связи с Telegram (например, без VPN) — досылать каждые 5 мин
+    scheduler.add_job(notifier.flush_outbox, "interval", minutes=5, id="outbox", max_instances=1, coalesce=True,
+                      next_run_time=datetime.now() + timedelta(seconds=30))  # fmt: skip
     scheduler.start()
 
     dp = Dispatcher()

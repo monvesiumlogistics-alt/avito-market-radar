@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     sweep_large_total: int = 20000  # категория больше — обход берёт только 1-ю страницу (выборка)
     sweep_large_per_day: int = 150  # новых в сутки больше — тоже выборка
     deep_budget: int = 45  # Phase 4: загрузок на один выборочный прогон карточек (вкл. warm-up), ADR-025
+    deep_start_delay_min: float = 2  # после кнопки — пауза до первой загрузки (успеть переключить VPN/сеть)
     # частота обхода по областям (ADR-020, app/scope.py): CORE — ежедневно, OFF/HARD_EXCLUDE — никогда
     watch_every_hours: float = 44  # WATCH: ~раз в 2 дня, 1 страница
     query_every_hours: float = 44  # брендовые/модельные запросы: ~раз в 2 дня, 1 страница

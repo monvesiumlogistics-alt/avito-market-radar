@@ -18,7 +18,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 THREE_DAYS = "30 сентября в 12:00"  # возраст 3 дня
 # без пауз после блока и без общего темпа Avito: их проверяют test_cooldown / test_traffic
 FAST = {"block_cooldowns": 0, "avito_min_interval_s": 0, "avito_max_per_hour": 10**6, "avito_daily_budget": 10**6,
-        "max_blocks_per_day": 10**6, "post_captcha_cooldown_min": 0}  # fmt: skip
+        "max_blocks_per_day": 10**6, "post_captcha_cooldown_min": 0, "deep_start_delay_min": 0}  # fmt: skip
 
 
 def search_url(page: int = 1) -> str:

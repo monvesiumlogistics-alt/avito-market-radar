@@ -338,6 +338,8 @@ class MarketCrawler:
         from app.services import candidates as cand_engine
         from app.services import deep_scan as plan
 
+        if self.settings.deep_start_delay_min > 0:
+            await self._idle(self.settings.deep_start_delay_min, "⏳ старт через пару минут", None)
         now = self.clock()
         with self.session_factory() as db:
             cands = [c for c in cand_engine.run(db, now)["candidates"] if c.confidence in ("MEDIUM", "LOW")]

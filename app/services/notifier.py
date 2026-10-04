@@ -1,6 +1,8 @@
 import html
+import json
 import logging
 from datetime import time
+from pathlib import Path
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
@@ -34,9 +36,11 @@ def format_listing(row: ListingRow, rule_name: str) -> str:
 
 
 class TelegramNotifier:
-    def __init__(self, bot: Bot, chat_id: int):
+    def __init__(self, bot: Bot, chat_id: int, outbox: str | None = "./data/telegram_outbox.jsonl"):
         self.bot = bot
         self.chat_id = chat_id
+        # Telegram недоступен (например, без VPN): служебные сообщения не теряются — копятся в файле и досылаются
+        self.outbox = Path(outbox) if outbox else None
 
     async def send_listing(self, row: ListingRow, rule_name: str) -> bool:
         text = format_listing(row, rule_name)
@@ -64,8 +68,39 @@ class TelegramNotifier:
             )
             return msg.message_id
         except Exception:
-            log.exception("[NOTIFY] не удалось отправить служебное сообщение")
+            log.exception("[NOTIFY] не удалось отправить служебное сообщение — в очередь")
+            self._queue(text)
             return None
+
+    def _queue(self, text: str) -> None:
+        if self.outbox is None:
+            return
+        self.outbox.parent.mkdir(parents=True, exist_ok=True)
+        with self.outbox.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"text": text}, ensure_ascii=False) + "\n")
+
+    async def flush_outbox(self) -> int:
+        """Дослать накопленное по порядку; на первой ошибке остановиться (связи всё ещё нет). Возвращает отправлено."""
+        if self.outbox is None or not self.outbox.exists():
+            return 0
+        pending = [json.loads(x)["text"] for x in self.outbox.read_text(encoding="utf-8").splitlines() if x.strip()]
+        sent = 0
+        for text in pending:
+            try:
+                await self.bot.send_message(self.chat_id, text, link_preview_options=NO_PREVIEW)
+            except Exception as e:
+                log.warning("[NOTIFY] очередь: Telegram всё ещё недоступен (%s), осталось %d", e, len(pending) - sent)
+                break
+            sent += 1
+        rest = pending[sent:]
+        if rest:
+            self.outbox.write_text("".join(json.dumps({"text": t}, ensure_ascii=False) + "\n" for t in rest),
+                                   encoding="utf-8")  # fmt: skip
+        else:
+            self.outbox.unlink()
+        if sent:
+            log.info("[NOTIFY] из очереди отправлено %d", sent)
+        return sent
 
     async def edit_text(self, message_id: int, text: str) -> None:
         try:
