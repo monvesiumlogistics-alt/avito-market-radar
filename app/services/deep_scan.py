@@ -18,7 +18,7 @@ from app.services.attention import BASELINE_MIN_N, baseline, latest_obs, main_ca
 from app.services.candidates import Candidate
 
 REOPEN_HOURS = 24  # одно объявление не открывать чаще
-BASELINE_BUDGET = 15
+BASELINE_BUDGET = 16  # две категории до пригодной нормы (8 + 8)
 FIRST_PASS = 22  # товаров в первом проходе (по 1 карточке)
 BRAND_CAP = 4  # в первом проходе — не больше товаров одного бренда, пока остальные не получили шанс
 WEAK_MULTIPLE = 0.8  # после первой карточки слабее — вторую не тратить

@@ -101,3 +101,14 @@ async def test_deep_run_budget_buckets_no_seller_profiles(tmp_path):
     buckets = {o.bucket for o in obs}
     assert buckets <= {"baseline", "candidate", "followup"} and "baseline" in buckets and "candidate" in buckets
     assert "🔬 Выборочные карточки" in t.notifier.sent[-1]
+
+
+def test_phase4_scripts_plan_and_report_import_no_browser():
+    import subprocess
+    import sys
+
+    banned = "('playwright', 'app.providers.avito_browser')"
+    for mod in ("scripts.product_hunter", "scripts.deep_scan"):
+        code = f"import sys, {mod}; print(any(m.startswith({banned}) for m in sys.modules))"
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+        assert out.stdout.strip() == "False", mod  # план и отчёт — без браузера; браузер грузит только реальный прогон
