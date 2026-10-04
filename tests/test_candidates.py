@@ -49,13 +49,14 @@ def test_dominant_shop_is_low_even_across_cities():
     rows = [row(i, c, shop=s) for i, (c, s) in enumerate([("moskva", "A"), ("moskva", "A"), ("moskva", "A"),
                                                          ("spb", "A"), ("moskva", "A"), ("moskva", "A"),
                                                          ("spb", "B"), ("moskva", "C")])]  # fmt: skip
-    assert independence(metrics(rows)) == ("LOW", "75% объявлений у одного магазина")
+    level, text = independence(metrics(rows))
+    assert level == "LOW" and text.startswith("75% объявлений с известным магазином")
 
 
 def test_promoted_listings_do_not_make_strong_signal():
     m = metrics([row(1), row(2, "spb", promoted=True), row(3, "kazan", promoted=True)])
     assert evaluate(m, 10, None) == (None, "mostly_promoted")
-    assert (m.organic_14d, m.promoted_14d) == (1, 2)
+    assert (m.never_promoted_14d, m.ever_promoted_14d) == (1, 2)
 
 
 def test_single_expensive_listing_is_not_a_candidate():
@@ -198,3 +199,71 @@ def test_candidate_report_makes_no_network_requests():
     code = f"import sys, scripts.product_candidates; print(any(m.startswith({banned}) for m in sys.modules))"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
+
+
+# --- Phase 3.1 (ADR-024) ---
+
+
+def test_known_shop_share_counts_only_known_shops():
+    """5 объявлений магазина A + 5 без известного продавца: покрытие 50%, доля среди известных — 100%."""
+    rows = [row(i, f"c{i}", shop="A") for i in range(5)] + [row(i, f"c{i}") for i in range(5, 10)]
+    m = metrics(rows)
+    assert (m.seller_data_coverage, m.top_known_shop_share) == (0.5, 1.0)
+    assert independence(m)[0] == "LOW"
+
+
+def test_old_listing_first_seen_yesterday_gives_no_fake_prior_coverage(tmp_path):
+    """Бот начал обходить категорию вчера и увидел там объявление 10-дневной давности — это не 10 дней наблюдения."""
+    from app.db import CrawlRun, ScanCategory
+
+    t, (cid,) = seeded(tmp_path, ["CORE"])
+    with t.sf() as db:
+        run_ = CrawlRun(started_at=NOW - D, kind="sweep", status="done")
+        db.add(run_)
+        db.flush()
+        db.add(ScanCategory(run_id=run_.id, category_id=cid, at=NOW - D, pages=1, cards_seen=3, new_ads=3, known_ads=0,
+                            window_hours=24, stop_reason="known", done=True))  # fmt: skip
+        old = Listing(external_id="9", title="Kugoo R2", price=50000, url="https://www.avito.ru/omsk/x/t_9",
+                      published_at=NOW - 10 * D)  # fmt: skip
+        record_search(db, cid, [old], set(), NOW - D)
+        fresh = [Listing(external_id=str(i), title="Pioneer DDJ-FLX4", price=50000, url=f"https://www.avito.ru/{c}/x/t_{i}",
+                         published_at=NOW - D / 2) for i, c in ((1, "moskva"), (2, "spb"))]  # fmt: skip
+        record_search(db, cid, fresh, set(), NOW)
+        db.commit()
+        result = run(db, NOW)
+    assert result["candidates"] == [] and result["rejects"]["insufficient_prior_coverage"] == 1
+
+
+def test_category_price_baseline_uses_unrecognized_listings_too(tmp_path):
+    t, (cid,) = seeded(tmp_path, ["CORE"])
+    cheap_noise = [Listing(external_id=str(100 + i), title="Электровелосипед", price=20000,
+                           url=f"https://www.avito.ru/c{i}/x/t_{100 + i}", published_at=NOW - D)
+                   for i in range(10)]  # fmt: skip
+    model = [Listing(external_id=str(i), title="Doona X", price=45000, url=f"https://www.avito.ru/{c}/x/t_{i}",
+                     published_at=NOW - D) for i, c in ((1, "moskva"), (2, "spb"), (3, "kazan"))]  # fmt: skip
+    with t.sf() as db:
+        record_search(db, cid, cheap_noise + model, set(), NOW)
+        db.commit()
+        (cand,) = run(db, NOW)["candidates"]
+    assert cand.metrics.category_price_p75 == 20000 and "HIGH_TICKET" in cand.reasons  # норма — по всем 13
+
+
+def test_rebuild_drops_live_candidate_of_removed_product_keeps_history(tmp_path):
+    from app.db import CandidateLog, Product, ProductCandidate
+    from app.services.candidates import persist
+    from app.services.product_store import rebuild
+
+    t, (cid,) = seeded(tmp_path, ["CORE"])
+    with t.sf() as db:
+        record_search(db, cid, [lst(i, "Doona X", c) for i, c in ((1, "moskva"), (2, "spb"), (3, "kazan"))],
+                      set(), NOW)  # fmt: skip
+        db.commit()
+        persist(db, run(db, NOW)["candidates"], NOW)
+        for a in db.scalars(select(Ad)):
+            a.title = "Коляска"  # экстрактор больше не видит модель — товар станет сиротой
+        db.commit()
+        report = rebuild(db, NOW + D)
+        assert report["orphans_removed"] == 1 and report["stale_candidates_removed"] == 1
+        assert db.scalars(select(ProductCandidate)).all() == [] and db.scalars(select(Product)).all() == []
+        (log,) = db.scalars(select(CandidateLog)).all()
+    assert (log.metrics["canonical_key"], log.metrics["name"]) == ("doona|x", "Doona X")  # история читаема

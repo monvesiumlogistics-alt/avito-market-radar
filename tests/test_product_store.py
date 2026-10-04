@@ -70,7 +70,7 @@ def test_rebuild_offline_reassigns_and_logs(tmp_path):
     with t.sf() as db:
         report = rebuild(db, NOW)
     assert t.provider.calls == []  # ни одной загрузки Avito
-    assert report == {"ads": 4, "changed": 3, "orphans_removed": 1}
+    assert report == {"ads": 4, "changed": 3, "orphans_removed": 1, "stale_candidates_removed": 0}
     keys = {a.id: (a.product_id, a.identity_conf) for a in rows(t, Ad)}
     assert keys["1"][0] == keys["2"][0] != keys["3"][0] and keys["4"] == (None, "UNKNOWN")
     with t.sf() as db:

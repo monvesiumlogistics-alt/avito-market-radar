@@ -99,4 +99,4 @@ def test_goofish_query_uses_product_identity():
 
 
 def test_extractor_version():
-    assert PRODUCT_EXTRACTOR_VERSION == 1
+    assert PRODUCT_EXTRACTOR_VERSION == 2

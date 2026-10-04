@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db import Ad, AdQuerySighting, Category, Product, ProductAssignment
+from app.db import Ad, AdQuerySighting, Category, Product, ProductAssignment, ProductCandidate
 from app.services.products import (
     PRODUCT_EXTRACTOR_VERSION,
     ProductIdentity,
@@ -103,8 +103,13 @@ def rebuild(db: Session, now: datetime) -> dict:
             orphans.append(p)
     for p in orphans:
         db.delete(p)
+    gone = {p.id for p in orphans}
+    stale = [c for c in db.scalars(select(ProductCandidate)) if c.product_id in gone]
+    for c in stale:  # текущее состояние кандидата без товара удаляем; история (candidate_log) остаётся
+        db.delete(c)
     db.commit()
-    return {"ads": len(domains), "changed": changed, "orphans_removed": len(orphans)}
+    return {"ads": len(domains), "changed": changed, "orphans_removed": len(orphans),
+            "stale_candidates_removed": len(stale)}  # fmt: skip
 
 
 def diagnostics(db: Session, scopes: tuple[str, ...] = ("CORE", "WATCH", "QUERY"), top: int = 20) -> dict:

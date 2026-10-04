@@ -1358,5 +1358,85 @@
   "canonical_key": "alienware|15-r3",
   "confidence": "HIGH",
   "source": "db"
+ },
+ {
+  "title": "Электровелосипед hualu U2 40/60/70ah",
+  "domain": "ebike",
+  "brand_slug": "hualu",
+  "canonical_key": "hualu|u2",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед hualu u2",
+  "domain": "ebike",
+  "brand_slug": "hualu",
+  "canonical_key": "hualu|u2",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электрлвелосипед hualu R7 71.4v 60ач",
+  "domain": "ebike",
+  "brand_slug": "hualu",
+  "canonical_key": "hualu|r7",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед бу kugoо v3pro+",
+  "domain": "ebike",
+  "brand_slug": "kugoo",
+  "canonical_key": "kugoo|v3-pro-plus",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Kugoo v3 pro plus 28.6 ah",
+  "domain": "ebike",
+  "brand_slug": "kugoo",
+  "canonical_key": "kugoo|v3-pro-plus",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед Wenbox u5 80a",
+  "domain": "ebike",
+  "brand_slug": "wenbox",
+  "canonical_key": "wenbox|u5",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Wenbox U5",
+  "domain": "ebike",
+  "brand_slug": "wenbox",
+  "canonical_key": "wenbox|u5",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед WenBox U7 PRO 2000W 60V 45Ah",
+  "domain": "ebike",
+  "brand_slug": "wenbox",
+  "canonical_key": "wenbox|u7-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Aimiko U2 Pro 63V/65Ah 9a Strong",
+  "domain": "ebike",
+  "brand_slug": "aimiko",
+  "canonical_key": "aimiko|u2-pro",
+  "confidence": "HIGH",
+  "source": "db"
+ },
+ {
+  "title": "Электровелосипед aimiko u2 pro premium 3000w",
+  "domain": "ebike",
+  "brand_slug": "aimiko",
+  "canonical_key": "aimiko|u2-pro-premium",
+  "confidence": "HIGH",
+  "source": "db"
  }
 ]

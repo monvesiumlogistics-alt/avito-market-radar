@@ -32,7 +32,7 @@ def rub(v):
 def line(i: int, c: Candidate) -> str:
     m = c.metrics
     return (f"{i:2}. {m.name} [{', '.join(m.scopes)}] — {'+'.join(c.reasons)} · 14д {m.listings_14d} "
-            f"(орг. {m.organic_14d}) · городов {m.cities_14d} · магазинов {m.known_shops_14d} · "
+            f"(без продв. {m.never_promoted_14d}) · городов {m.cities_14d} · магазинов {m.known_shops_14d} · "
             f"{rub(m.price_median)} · {c.confidence}/{c.independence}")  # fmt: skip
 
 
@@ -43,9 +43,9 @@ def detail(i: int, c: Candidate) -> str:
         f"   причины: {', '.join(c.reasons)}",
         f"   объявлений: 24ч {m.listings_24h} · 72ч {m.listings_72h} · 7д {m.listings_7d} · 14д {m.listings_14d}"
         f" · живых {m.live_listings} · всего {m.distinct_ads}",
-        f"   органические {m.organic_14d} · продвинутые {m.promoted_14d} · дней с объявлениями {m.days_spread_14d}",
+        f"   ни разу не видели продвинутыми {m.never_promoted_14d} · хоть раз продвинутые {m.ever_promoted_14d} · дней с объявлениями {m.days_spread_14d}",
         f"   городов 7д/14д: {m.cities_7d}/{m.cities_14d} · известных магазинов {m.known_shops_7d}/{m.known_shops_14d}"
-        f" · покрытие продавцов {int(m.seller_data_coverage * 100)}% · доля крупнейшего магазина {int(m.top_shop_share * 100)}%",
+        f" · магазин известен у {int(m.seller_data_coverage * 100)}% · крупнейший среди известных {int(m.top_known_shop_share * 100)}%",
         f"   цена: {rub(m.price_p25)} / {rub(m.price_median)} / {rub(m.price_p75)}",
         f"   на рынке с {m.first_market_seen:%d.%m %H:%M} (дата {m.first_date_conf}), последний раз"
         f" {m.latest_market_seen:%d.%m %H:%M}, возраст {m.product_age_days} дн · надёжных дат {int(m.reliable_date_share * 100)}%",

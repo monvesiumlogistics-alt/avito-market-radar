@@ -15,7 +15,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-PRODUCT_EXTRACTOR_VERSION = 1
+PRODUCT_EXTRACTOR_VERSION = 2  # v2: ёмкость 40/60/70ah, 71.4v, «+» = plus, амперы у электровелосипедов
 CLUSTERABLE = ("HIGH", "MEDIUM")
 
 
@@ -236,7 +236,7 @@ MODS = {"pro", "max", "ultra", "plus", "se", "mini", "air", "lite", "ti", "super
 COLORS = {"black", "white", "silver", "gold", "blue", "red", "green", "grey", "gray", "pink", "purple", "orange",
           "черный", "белый", "серый", "синий", "красный", "зеленый", "золотой", "серебристый", "розовый"}  # fmt: skip
 VARIANT_RE = re.compile(
-    r"^(\d+(gb|гб|tb|тб|mb|мб)|\d+/\d+(gb|гб|tb|тб)?|\d+(v|в|ah|ач|w|вт|mah|мач|kw|квт|hz|гц|мм|mm|см|cm|кг|kg|л)"
+    r"^(\d+(gb|гб|tb|тб|mb|мб)|\d+(/\d+)+(gb|гб|tb|тб|ah|ач)?|\d+([.,]\d+)?(v|в|ah|ач|w|вт|mah|мач|kw|квт|hz|гц|мм|mm|см|cm|кг|kg|л)"
     r"|(19|20)\d\d|\d+\"|\d+k)$"
 )
 LAPTOP_SPEC_RE = re.compile(
@@ -322,6 +322,7 @@ def normalize(title: str) -> list[str]:
     t = re.sub(r"\binsta\s?360\s?(?=[a-z])", "insta360 ", t)  # insta 360x5, insta360go3s
     t = re.sub(r"\b(\d{2})(r\d)\b", r"\1 \2", t)  # Alienware 15r3 = 15 r3
     t = re.sub(r"\bmk\s?(\d|i{1,3}|iv)\b", r"mk\1", t)
+    t = re.sub(r"(?<=[a-z0-9])\+(?=\s|$)", " plus", t)  # V3PRO+ = V3 Pro Plus
     t = re.sub(r",", " , ", t)
     t = "".join(ch if ch.isalnum() or ch in " -+/.,'&\"" else " " for ch in t)
     out: list[str] = []
@@ -384,6 +385,8 @@ def _is_variant(tok: str, domain: str) -> bool:
         return True
     if domain == "laptop" and tok.isdigit() and len(tok) == 4:
         return True  # 1660, 3060 в названии ноутбука — видеокарта, не модель
+    if domain == "ebike" and re.fullmatch(r"\d+a", tok):
+        return True  # «Wenbox U5 80A» — ток контроллера, не модель
     return domain == "bike" and tok.isdigit() and 44 <= int(tok) <= 64  # размер рамы
 
 
